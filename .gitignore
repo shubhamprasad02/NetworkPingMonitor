@@ -1,0 +1,25 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+venv/
+.env
+
+# SQLite databases
+data/pingmonitor.db
+data/netwatch.db
+
+# Tenant data
+data/tenants/
+
+# Logs
+logs/
+
+# VS Code
+.vscode/
+
+# OS files
+Thumbs.db
+desktop.ini
+.DS_Store
