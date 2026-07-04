@@ -1,0 +1,4 @@
+Location,Name,IP
+Internet,Google DNS 1,8.8.8.8
+Internet,Google DNS 2,8.8.4.4
+Test,Fake Offline 1,192.0.2.1

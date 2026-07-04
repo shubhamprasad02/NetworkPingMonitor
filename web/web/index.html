@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NetWatch</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+      /* Global Layout & Premium Typography Refinements */
+      body, button, input, select {
+        font-family: 'Outfit', sans-serif;
+        letter-spacing: -0.1px;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* Structural Anti-Overflow Safety Layer */
+      *, *::before, *::after {
+        box-sizing: border-box;
+      }
+
+      .panel, .stat-card, .table-wrap, td, th, input, select {
+        word-break: break-word;
+        overflow-wrap: break-word;
+      }
+      
+      /* Make data metrics clean and properly aligned using a Monospace layout */
+      #statusRows td:nth-child(3), 
+      #statusRows td:nth-child(5) {
+        font-family: 'Roboto Mono', monospace;
+        font-size: 13px;
+        letter-spacing: -0.5px;
+      }
+
+      /* Premium Highlight Row Interaction Style */
+      #statusRows tr { 
+        cursor: pointer; 
+        transition: background-color 0.2s ease; 
+      }
+      #statusRows tr:hover { 
+        background-color: rgba(0, 0, 0, 0.015) !important; 
+      }
+      #statusRows tr.selected-device-row { 
+        background-color: rgba(74, 222, 128, 0.08) !important; 
+        font-weight: 500; 
+      }
+
+      /* Elegant Global Page Animation Framework */
+      @keyframes sectionFadeIn {
+        from { opacity: 0; transform: translateY(6px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      .page.active {
+        animation: sectionFadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      }
+
+      /* Clean and Secure Form Display System */
+      .add-device-form, .import-panel {
+        transition: opacity 0.2s ease, transform 0.2s ease;
+      }
+      
+      .add-device-form.hidden, .import-panel.hidden {
+        display: none !important;
+      }
+
+      /* Dynamic Hardware-Accelerated Dropdown UI Fixes */
+      select {
+        appearance: none;
+        background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23666666' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+        background-repeat: no-repeat;
+        background-position: right 12px center;
+        background-size: 14px;
+        padding-right: 36px !important;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+      }
+
+      select:focus {
+        background-color: #ffffff;
+        box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.03);
+      }
+
+      /* Soft Minimal Button Design Layer */
+      button, .primary-btn, .secondary-btn, .ghost-btn {
+        transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+        font-weight: 500;
+      }
+
+      button:hover {
+        transform: translateY(-1px);
+      }
+
+      button:active {
+        transform: translateY(0);
+      }
+    </style>
+  </head>
+  <body>
+    <main id="authView" class="auth-shell">
+      <section class="auth-panel">
+        <div class="brand-mark">NW</div>
+        <p class="eyebrow">Network uptime monitoring</p>
+        <h1 style="font-weight: 600;">NetWatch</h1>
+        <p class="lead">Monitor groups, device assets, incident logs, live system availability, and alerting configurations from one clean portal.</p>
+        <div class="auth-card">
+          <div class="auth-tabs">
+            <button class="auth-tab active" data-auth-tab="login">Login</button>
+            <button class="auth-tab" data-auth-tab="signup">Signup</button>
+          </div>
+          <form id="loginForm" class="auth-form">
+            <label>Email<input id="loginEmail" type="email" required /></label>
+            <label>Password<input id="loginPassword" type="password" required /></label>
+            <button type="submit" class="primary-btn">Open Dashboard</button>
+          </form>
+          <form id="signupForm" class="auth-form hidden">
+            <label>Your Name<input id="signupName" type="text" required /></label>
+            <label>Email<input id="signupEmail" type="email" required /></label>
+            <label>Password<input id="signupPassword" type="password" required /></label>
+            <label>Group Name<input id="signupCompany" type="text" required /></label>
+            <button type="submit" class="primary-btn">Create Account</button>
+          </form>
+          <p id="authMessage" class="auth-message"></p>
+        </div>
+      </section>
+      <section class="auth-preview">
+        <div class="signal-card floating"><span class="pulse-dot"></span><div><strong>Live core portal</strong><p>Separate endpoints and entries per login</p></div></div>
+        <div class="preview-window"><div class="preview-topbar"><span></span><span></span><span></span></div><div class="preview-content"><div class="mini-stat good">Active <strong>8</strong></div><div class="mini-stat danger">Unreachable <strong>1</strong></div><div id="authBars" class="mini-bars"></div></div></div>
+      </section>
+    </main>
+
+    <main id="appView" class="app-shell hidden">
+      <aside class="sidebar">
+        <div class="sidebar-brand"><div class="brand-mark small">NW</div><div><strong style="font-weight: 600;">NetWatch</strong><span id="userLabel">Portal</span></div></div>
+        <nav class="nav-list">
+          <button class="nav-item active" data-page="dashboard">Overview</button>
+          <button class="nav-item" data-page="devices">Devices</button>
+          <button class="nav-item" data-page="reports">Incident Log</button>
+          <button class="nav-item" data-page="notifications">Alerting</button>
+          <button class="nav-item" data-page="companies">Organizations</button>
+        </nav>
+        <button id="logoutBtn" class="ghost-btn">Logout</button>
+      </aside>
+
+      <section class="content">
+        <header class="topbar">
+          <div><p class="eyebrow">System panel</p><h2 id="pageTitle" style="font-weight: 500;">Overview</h2></div>
+          <div class="topbar-actions">
+            <label class="company-switcher">Group<select id="companySelect"></select></label>
+            <span id="lastUpdated" class="status-pill">Synced now</span>
+            <button id="refreshBtn" class="secondary-btn">Sync Feed</button>
+          </div>
+        </header>
+
+        <section id="dashboard" class="page active">
+          <div class="stats-grid">
+            <article class="stat-card"><span style="font-weight: 400;">Inventory</span><strong id="totalDevices" style="font-weight: 500;">0</strong></article>
+            <article class="stat-card good"><span style="font-weight: 400;">Operational</span><strong id="onlineDevices" style="font-weight: 500;">0</strong></article>
+            <article class="stat-card danger"><span style="font-weight: 400;">Unreachable</span><strong id="offlineDevices" style="font-weight: 500;">0</strong></article>
+            <article class="stat-card warning"><span style="font-weight: 400;">Incidents</span><strong id="reportCount" style="font-weight: 500;">0</strong></article>
+          </div>
+          <div class="dashboard-grid">
+            <section class="panel wide">
+              <div class="panel-header"><h3 style="font-weight: 500;">Real-time System Feed</h3><span class="status-pill live" style="margin-right: auto; margin-left: 10px;">Live</span><span style="font-size: 11px; color: #888; font-weight: 400;">Select a row to see individual history</span></div>
+              <div class="table-wrap"><table><thead><tr><th>Environment</th><th>Resource Name</th><th>Target Host</th><th>Availability</th><th>Latency</th><th>Failures</th><th>Duration</th></tr></thead><tbody id="statusRows"></tbody></table></div>
+            </section>
+            <section class="panel">
+              <div class="panel-header"><div><h3 id="chartDeviceTitle" style="font-weight: 500;">Uptime History</h3><span style="font-size: 11px; color: #888;">5m interval activity</span></div><strong id="currentHealth" class="health-score" style="font-family: 'Roboto Mono', monospace; font-weight: 500;">0%</strong></div>
+              
+              <div style="width: 100%; height: 220px; position: relative; margin-top: 15px;">
+                  <canvas id="uptimeChart"></canvas>
+              </div>
+              
+              <div class="chart-legend" style="margin-top: 15px; font-size: 11px; color: #666;"><span><i class="legend-dot good" style="background: #4ade80;"></i>Optimal (90%+)</span><span><i class="legend-dot warning" style="background: #fbbf24;"></i>Unstable (75%-89%)</span><span><i class="legend-dot danger" style="background: #f87171;"></i>Critical (&lt;75%)</span></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="devices" class="page">
+          <div class="panel">
+            <div class="panel-header"><h3 style="font-weight: 500;">Devices</h3><div class="inline-actions"><button id="showImportCsvBtn" class="secondary-btn">Ingest CSV</button><button id="exportDevicesBtn" class="secondary-btn">Extract CSV</button><button id="showAddDeviceBtn" class="secondary-btn">Register Device</button></div></div>
+            <form id="addDeviceForm" class="add-device-form hidden"><label>Environment<input id="newLocation" type="text" placeholder="Cloud / Office / Branch" required /></label><label>Resource Name<input id="newDeviceName" type="text" placeholder="Main Router" required /></label><label>Target Host IP<input id="newIpAddress" type="text" placeholder="8.8.8.8" required /></label><div class="form-actions"><button type="button" id="cancelAddDeviceBtn" class="ghost-action">Cancel</button><button type="submit" class="primary-btn">Save Device</button></div></form>
+            <div id="csvImportPanel" class="import-panel hidden"><p>CSV columns supported: <strong>Location,Name,IP</strong> or <strong>Location,Device Name,IP Address</strong>.</p><input id="csvFileInput" type="file" accept=".csv" /><button id="importCsvBtn" class="primary-btn">Ingest Devices</button></div>
+            <div id="deviceCards" class="device-grid"></div>
+          </div>
+        </section>
+
+        <section id="reports" class="page">
+          <div class="panel"><div class="panel-header"><h3 style="font-weight: 500;">Incident Reports</h3><button id="downloadReportBtn" class="secondary-btn">Export Log</button></div><div id="reportFilters" class="report-filters"></div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Environment</th><th>Resource Name</th><th>Target Host</th><th>Downtime Trigger</th><th>Recovery Time</th><th>Total Duration</th></tr></thead><tbody id="reportRows"></tbody></table></div></div>
+        </section>
+
+        <section id="notifications" class="page">
+          <div class="panel settings-panel">
+            <h3 style="font-weight: 500;">Alerting Profile</h3>
+            <label>Primary Routing Destination Email<input id="companyEmail" type="email" style="word-wrap: break-word; word-break: break-all; overflow-wrap: break-word;" /></label>
+            <label>Secondary Routing Destinations<input id="companyReceivers" type="text" placeholder="noc@company.com, admin@company.com" style="word-wrap: break-word; word-break: break-all; overflow-wrap: break-word;" /></label>
+            <label>Breach Escalation Threshold (Seconds)<input id="alertSeconds" type="number" min="5" /></label>
+            <p class="helper-text">Sender routing profiles are managed globally by system security services.</p>
+            <button id="saveNotificationBtn" class="primary-btn">Save Alert Profile</button>
+          </div>
+        </section>
+
+        <section id="companies" class="page">
+          <div class="panel">
+            <div class="panel-header">
+              <div><h3 style="font-weight: 500;">Organizations</h3><span>Manage active tracking profile environments.</span></div>
+              <button id="showAddCompanyBtn" class="secondary-btn">Register Group</button>
+            </div>
+            <form id="addCompanyForm" class="add-device-form hidden">
+              <label>Company Name<input id="newCompanyName" type="text" required /></label>
+              <label>Contact Email<input id="newCompanyEmail" type="email" required /></label>
+              <div class="form-actions">
+                <button type="button" id="cancelAddCompanyBtn" class="ghost-action">Cancel</button>
+                <button type="submit" class="primary-btn">Save</button>
+              </div>
+            </form>
+            <div id="companyCards" class="company-grid"></div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      let uptimeChart = null;
+      let selectedDeviceIP = ""; 
+      
+      const deviceHistoryLogs = {};
+
+      function initChartEngine() {
+        const ctx = document.getElementById('uptimeChart').getContext('2d');
+        uptimeChart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: [],
+            datasets: [{
+              label: 'Availability Rate (%)',
+              data: [],
+              backgroundColor: [],
+              borderColor: [],
+              borderWidth: 1,
+              barPercentage: 0.4,
+              borderRadius: 4
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              y: { 
+                beginAtZero: true, 
+                max: 100, 
+                grid: { color: '#f5f5f5' },
+                ticks: { font: { family: 'Roboto Mono', size: 10 } }
+              },
+              x: { 
+                grid: { display: false },
+                ticks: { font: { family: 'Roboto Mono', size: 10 } } 
+              }
+            }
+          }
+        });
+      }
+
+      function calculateTimeLabel() {
+        const now = new Date();
+        const roundedMin = Math.floor(now.getMinutes() / 5) * 5;
+        return `${now.getHours().toString().padStart(2, '0')}:${roundedMin.toString().padStart(2, '0')}`;
+      }
+
+      function processPingMetrics(devicesList) {
+        if (!uptimeChart) initChartEngine();
+        if (!devicesList || devicesList.length === 0) {
+          selectedDeviceIP = "";
+          return;
+        }
+
+        const targetLabel = calculateTimeLabel();
+
+        devicesList.forEach(dev => {
+          const ip = dev.ip;
+          
+          if (!deviceHistoryLogs[ip]) {
+            deviceHistoryLogs[ip] = {
+              history: [],
+              currentInterval: "",
+              attempts: 0,
+              successes: 0,
+              deviceName: dev.name
+            };
+          }
+
+          const record = deviceHistoryLogs[ip];
+          record.deviceName = dev.name;
+
+          if (targetLabel !== record.currentInterval) {
+            record.currentInterval = targetLabel;
+            record.attempts = 0;
+            record.successes = 0;
+
+            record.history.push({
+              label: targetLabel,
+              value: 100,
+              bg: 'rgba(74, 222, 128, 0.4)',
+              border: 'rgba(74, 222, 128, 1)'
+            });
+
+            if (record.history.length > 10) {
+              record.history.shift();
+            }
+          }
+
+          record.attempts++;
+          if (dev.status === 'ONLINE' || dev.confirmedStatus === 'ONLINE' || (dev.status && dev.status.includes('ONLINE'))) {
+            record.successes++;
+          }
+
+          const percentage = Math.round((record.successes / record.attempts) * 100);
+          const currentItem = record.history[record.history.length - 1];
+          if (currentItem) {
+            currentItem.value = percentage;
+
+            if (percentage >= 90) {
+              currentItem.bg = 'rgba(74, 222, 128, 0.4)';
+              currentItem.border = 'rgba(74, 222, 128, 1)';
+            } else if (percentage >= 75) {
+              currentItem.bg = 'rgba(251, 191, 36, 0.4)';
+              currentItem.border = 'rgba(251, 191, 36, 1)';
+            } else {
+              currentItem.bg = 'rgba(248, 113, 113, 0.4)';
+              currentItem.border = 'rgba(248, 113, 113, 1)';
+            }
+          }
+        });
+
+        const activeDeviceExists = devicesList.some(d => d.ip === selectedDeviceIP);
+        if (!activeDeviceExists && devicesList.length > 0) {
+          selectedDeviceIP = devicesList[0].ip;
+        }
+
+        refreshChartDisplay();
+      }
+
+      function refreshChartDisplay() {
+        if (!uptimeChart || !selectedDeviceIP) return;
+
+        const record = deviceHistoryLogs[selectedDeviceIP];
+        if (!record) return;
+
+        document.getElementById('chartDeviceTitle').innerText = `${record.deviceName}`;
+
+        uptimeChart.data.labels = [];
+        uptimeChart.data.datasets[0].data = [];
+        uptimeChart.data.datasets[0].backgroundColor = [];
+        uptimeChart.data.datasets[0].borderColor = [];
+
+        record.history.forEach(item => {
+          uptimeChart.data.labels.push(item.label);
+          uptimeChart.data.datasets[0].data.push(item.value);
+          uptimeChart.data.datasets[0].backgroundColor.push(item.bg);
+          uptimeChart.data.datasets[0].borderColor.push(item.border);
+        });
+
+        uptimeChart.update('none');
+
+        const totalItems = record.history.length;
+        const latestScore = totalItems > 0 ? record.history[totalItems - 1].value : 0;
+        document.getElementById('currentHealth').innerText = latestScore + '%';
+
+        const rows = document.querySelectorAll('#statusRows tr');
+        rows.forEach(row => {
+          if (row.children[2] && row.children[2].innerText.trim() === selectedDeviceIP) {
+            row.classList.add('selected-device-row');
+          } else {
+            row.classList.remove('selected-device-row');
+          }
+        });
+      }
+
+      document.getElementById('statusRows').addEventListener('click', function(e) {
+        const row = e.target.closest('tr');
+        if (!row) return;
+        
+        const ipCell = row.children[2];
+        if (ipCell) {
+          selectedDeviceIP = ipCell.innerText.trim();
+          refreshChartDisplay();
+        }
+      });
+
+      const targetTable = document.getElementById('statusRows');
+      const observer = new MutationObserver(() => {
+         if(window.currentDashboardDevicesData) {
+             processPingMetrics(window.currentDashboardDevicesData);
+         } else {
+             const fallbackArray = [];
+             targetTable.querySelectorAll('tr').forEach(row => {
+                 const loc = row.children[0]?.innerText || '';
+                 const name = row.children[1]?.innerText || '';
+                 const ip = row.children[2]?.innerText || '';
+                 const status = row.children[3]?.innerText || '';
+                 if (ip) {
+                    fallbackArray.push({ location: loc, name: name, ip: ip.trim(), status: status });
+                 }
+             });
+             if (fallbackArray.length > 0) processPingMetrics(fallbackArray);
+         }
+      });
+      observer.observe(targetTable, { childList: true });
+    </script>
+    <script src="app.js"></script>
+  </body>
+</html>

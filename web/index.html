@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NetWatch — Network Uptime Monitoring</title>
+    <meta name="description" content="Monitor device uptime, incident logs, live network health, and alerts from one clean portal." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+      body, button, input, select {
+        font-family: 'Outfit', sans-serif;
+        letter-spacing: -0.1px;
+        -webkit-font-smoothing: antialiased;
+      }
+      *, *::before, *::after { box-sizing: border-box; }
+      .panel, .stat-card, .table-wrap, td, th, input, select { word-break: break-word; overflow-wrap: break-word; }
+
+      #statusRows td:nth-child(3),
+      #statusRows td:nth-child(5) {
+        font-family: 'Roboto Mono', monospace;
+        font-size: 12px;
+        letter-spacing: -0.5px;
+      }
+      #statusRows tr { cursor: pointer; transition: background-color 0.2s ease; }
+      #statusRows tr:hover { background-color: rgba(0,0,0,0.015) !important; }
+      #statusRows tr.selected-device-row { background-color: rgba(74,222,128,0.08) !important; font-weight: 500; }
+
+      @keyframes sectionFadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+      .page.active { animation: sectionFadeIn 0.35s cubic-bezier(0.16,1,0.3,1) forwards; }
+      .add-device-form.hidden, .import-panel.hidden { display: none !important; }
+
+      select {
+        appearance: none;
+        background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23666666' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+        background-repeat: no-repeat;
+        background-position: right 12px center;
+        background-size: 14px;
+        padding-right: 36px !important;
+      }
+      button, .primary-btn, .secondary-btn, .ghost-btn {
+        transition: all 0.2s cubic-bezier(0.16,1,0.3,1) !important;
+        font-weight: 500;
+      }
+      button:hover { transform: translateY(-1px); }
+      button:active { transform: translateY(0); }
+    </style>
+  </head>
+  <body>
+
+    <!-- ── AUTH LANDING PAGE ── -->
+    <main id="authView" class="auth-shell">
+
+      <!-- Left: Auth Panel -->
+      <section class="auth-panel">
+        <div class="brand-mark">NW</div>
+        <p class="eyebrow">Network Uptime Monitoring</p>
+        <h1 style="font-weight:700;">NetWatch</h1>
+        <p class="lead">Monitor groups, device assets, incident logs, live system availability, and alerting configurations from one clean portal.</p>
+
+        <div class="auth-card">
+          <div class="auth-tabs">
+            <button class="auth-tab active" data-auth-tab="login">Login</button>
+            <button class="auth-tab" data-auth-tab="signup">Signup</button>
+          </div>
+          <form id="loginForm" class="auth-form">
+            <label>Email<input id="loginEmail" type="email" placeholder="you@example.com" required /></label>
+            <label>Password<input id="loginPassword" type="password" placeholder="••••••••" required /></label>
+            <button type="submit" class="primary-btn" style="margin-top:4px;">Open Dashboard</button>
+          </form>
+          <form id="signupForm" class="auth-form hidden">
+            <label>Your Name<input id="signupName" type="text" placeholder="John Doe" required /></label>
+            <label>Email<input id="signupEmail" type="email" placeholder="you@example.com" required /></label>
+            <label>Password<input id="signupPassword" type="password" placeholder="••••••••" required /></label>
+            <label>Group Name<input id="signupCompany" type="text" placeholder="Acme Corp" required /></label>
+            <button type="submit" class="primary-btn" style="margin-top:4px;">Create Account</button>
+          </form>
+          <p id="authMessage" class="auth-message"></p>
+        </div>
+      </section>
+
+      <!-- Right: Preview Panel -->
+      <section class="auth-preview">
+
+        <!-- Floating signal card -->
+        <div class="signal-card floating">
+          <span class="pulse-dot"></span>
+          <div>
+            <strong>Live monitoring active</strong>
+            <p>Ping checks every 30 seconds</p>
+          </div>
+        </div>
+
+        <!-- Live stats row -->
+        <div class="auth-preview-stats">
+          <div class="auth-preview-stat good">
+            <span class="stat-label">Online</span>
+            <div class="stat-value" id="authOnline">—</div>
+          </div>
+          <div class="auth-preview-stat danger">
+            <span class="stat-label">Offline</span>
+            <div class="stat-value" id="authOffline">—</div>
+          </div>
+          <div class="auth-preview-stat blue">
+            <span class="stat-label">Uptime</span>
+            <div class="stat-value" id="authUptime">—</div>
+          </div>
+          <div class="auth-preview-stat warn">
+            <span class="stat-label">Incidents</span>
+            <div class="stat-value" id="authIncidents">—</div>
+          </div>
+        </div>
+
+        <!-- Bar chart window -->
+        <div class="preview-window">
+          <div class="preview-topbar">
+            <span></span><span></span><span></span>
+          </div>
+          <div class="preview-bar-chart" id="authBars">
+            <!-- bars injected by JS -->
+          </div>
+        </div>
+
+      </section>
+    </main>
+
+    <!-- ── APP SHELL ── -->
+    <main id="appView" class="app-shell hidden">
+      <aside class="sidebar">
+        <div class="sidebar-brand">
+          <div class="brand-mark small">NW</div>
+          <div>
+            <strong>NetWatch</strong>
+            <span id="userLabel">Portal</span>
+          </div>
+        </div>
+        <nav class="nav-list">
+          <button class="nav-item active" data-page="dashboard">Dashboard</button>
+          <button class="nav-item" data-page="devices">Devices</button>
+          <button class="nav-item" data-page="reports">Incident Log</button>
+          <button class="nav-item" data-page="notifications">Alerting</button>
+          <button class="nav-item" data-page="companies">Groups</button>
+        </nav>
+        <button id="logoutBtn" class="ghost-btn">Logout</button>
+      </aside>
+
+      <section class="content">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">System panel</p>
+            <h2 id="pageTitle" style="font-weight:500;margin:0;font-size:22px;">Dashboard</h2>
+          </div>
+          <div class="topbar-actions">
+            <label class="company-switcher">Group<select id="companySelect"></select></label>
+            <span id="lastUpdated" class="status-pill">Synced now</span>
+            <button id="refreshBtn" class="secondary-btn">Sync Feed</button>
+          </div>
+        </header>
+
+        <!-- ── DASHBOARD PAGE ── -->
+        <section id="dashboard" class="page active">
+          <!-- Stat Cards -->
+          <div class="stats-grid">
+            <article class="stat-card"><span>Inventory</span><strong id="totalDevices">0</strong></article>
+            <article class="stat-card good"><span>Operational</span><strong id="onlineDevices">0</strong></article>
+            <article class="stat-card danger"><span>Unreachable</span><strong id="offlineDevices">0</strong></article>
+            <article class="stat-card warning"><span>Incidents</span><strong id="reportCount">0</strong></article>
+          </div>
+
+          <!-- Dashboard Grid: Live Feed + Uptime History -->
+          <div class="dashboard-grid">
+            <!-- Left: Live Feed -->
+            <section class="panel wide">
+              <div class="panel-header">
+                <h3 style="font-weight:500;font-size:14px;margin:0;">Real-time System Feed</h3>
+                <span class="status-pill live" style="background:var(--good-bg);color:var(--good);border:1px solid rgba(22,163,74,0.25);margin-right:auto;margin-left:10px;">Live</span>
+                <span style="font-size:11px;color:#888;">Click a row to view history</span>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Location</th><th>Resource Name</th><th>Target Host</th><th>Availability</th><th>Latency</th><th>Failures</th><th>Duration</th></tr>
+                  </thead>
+                  <tbody id="statusRows"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <!-- Right: Uptime History (12 bars = 2h) -->
+            <section class="panel" style="min-height:0;">
+              <div class="panel-header">
+                <div>
+                  <h3 id="chartDeviceTitle" style="font-weight:500;font-size:14px;margin:0;">Uptime History</h3>
+                  <span style="font-size:10px;color:#888;">Last 2 hours · 10 min buckets</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <strong id="currentHealth" style="font-family:'Roboto Mono',monospace;font-weight:600;font-size:18px;color:var(--primary);">0%</strong>
+                  <button id="expandDashboardBtn" class="expand-btn" title="Expand fullscreen" style="padding:5px;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;min-height:30px;border-radius:6px;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div id="healthBars" style="display:flex;gap:8px;align-items:flex-end;flex:1;padding:4px 0;"></div>
+              <div class="chart-legend">
+                <span><i class="legend-dot" style="background:var(--good);"></i>Optimal (90%+)</span>
+                <span><i class="legend-dot" style="background:var(--warning);"></i>Unstable (75–89%)</span>
+                <span><i class="legend-dot" style="background:var(--danger);"></i>Critical (&lt;75%)</span>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <!-- ── DEVICES PAGE ── -->
+        <section id="devices" class="page">
+          <div class="panel">
+            <div class="panel-header">
+              <h3 style="font-weight:500;">Devices</h3>
+              <div class="inline-actions">
+                <button id="showImportCsvBtn" class="secondary-btn">Import CSV</button>
+                <button id="exportDevicesBtn" class="secondary-btn">Export CSV</button>
+                <button id="showAddDeviceBtn" class="secondary-btn">Register Device</button>
+              </div>
+            </div>
+            <form id="addDeviceForm" class="add-device-form hidden">
+              <label>Location<input id="newLocation" type="text" placeholder="Cloud / Office / Branch" required /></label>
+              <label>Resource Name<input id="newDeviceName" type="text" placeholder="Main Router" required /></label>
+              <label>Target Host IP<input id="newIpAddress" type="text" placeholder="8.8.8.8" required /></label>
+              <div class="form-actions">
+                <button type="button" id="cancelAddDeviceBtn" class="ghost-action">Cancel</button>
+                <button type="submit" class="primary-btn">Save Device</button>
+              </div>
+            </form>
+            <div id="csvImportPanel" class="import-panel hidden">
+              <p>CSV columns: <strong>Location,Name,IP</strong> or <strong>Location,Device Name,IP Address</strong>.</p>
+              <input id="csvFileInput" type="file" accept=".csv" />
+              <button id="importCsvBtn" class="primary-btn">Import Devices</button>
+            </div>
+            <div id="deviceCards" class="device-grid"></div>
+          </div>
+        </section>
+
+        <!-- ── INCIDENT LOG PAGE ── -->
+        <section id="reports" class="page">
+          <div class="panel">
+            <div class="panel-header">
+              <h3 style="font-weight:500;">Incident Reports</h3>
+              <button id="downloadReportBtn" class="secondary-btn">Export Log</button>
+            </div>
+            <div class="incident-filter-bar">
+              <div class="device-dropdown-wrap">
+                <button id="deviceFilterToggle" class="device-dropdown-toggle" aria-haspopup="listbox" aria-expanded="false">
+                  <span id="deviceFilterLabel">All Devices</span>
+                  <svg class="toggle-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+                <div id="deviceDropdownList" class="device-dropdown-list" role="listbox"></div>
+              </div>
+              <span id="incidentResultCount" class="incident-result-count"></span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Date</th><th>Location</th><th>Resource Name</th><th>Target Host</th><th>Downtime Trigger</th><th>Recovery Time</th><th>Total Duration</th></tr></thead>
+                <tbody id="reportRows"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ── ALERTING PAGE ── -->
+        <section id="notifications" class="page">
+          <div class="panel settings-panel">
+            <h3 style="font-weight:500;">Alerting Profile</h3>
+            <label>Primary Alert Email
+              <input id="companyEmail" type="email" placeholder="yourname@gmail.com" />
+            </label>
+            <label>Additional Alert Recipients
+              <input id="companyReceivers" type="text" placeholder="noc@company.com, admin@company.com" />
+            </label>
+            <label>Outage Alert Threshold (Seconds)
+              <input id="alertSeconds" type="number" min="5" />
+            </label>
+            <p class="helper-text">Alerts are sent when a device goes offline longer than the threshold. Separate multiple recipients with commas.</p>
+            <button id="saveNotificationBtn" class="primary-btn" style="width:fit-content;">Save Alert Profile</button>
+          </div>
+        </section>
+
+        <!-- ── GROUPS PAGE ── -->
+        <section id="companies" class="page">
+          <div class="panel">
+            <div class="panel-header">
+              <div><h3 style="font-weight:500;">Groups</h3><span>Manage active tracking profile locations.</span></div>
+              <button id="showAddCompanyBtn" class="secondary-btn">Register Group</button>
+            </div>
+            <form id="addCompanyForm" class="add-device-form hidden">
+              <label>Group Name<input id="newCompanyName" type="text" required /></label>
+              <label>Administrative Contact<input id="newCompanyEmail" type="email" required /></label>
+              <div class="form-actions">
+                <button type="button" id="cancelAddCompanyBtn" class="ghost-action">Cancel</button>
+                <button type="submit" class="primary-btn">Save Group</button>
+              </div>
+            </form>
+            <div id="companyCards" class="company-grid"></div>
+          </div>
+        </section>
+
+      </section>
+    </main>
+
+
+    <!-- ── DASHBOARD FULLSCREEN OVERLAY (3-column) ── -->
+    <div id="dashboardOverlay" role="dialog" aria-modal="true" aria-label="Dashboard Expanded View">
+      <div id="dashboardOverlayInner">
+
+        <!-- Header -->
+        <div id="dashboardOverlayHeader">
+          <div>
+            <h3>Dashboard — Expanded View</h3>
+            <p class="overlay-sub" id="overlaySubTitle">Select a device on the left to view its analytics graph</p>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span class="status-pill live" style="background:var(--good-bg);color:var(--good);border:1px solid rgba(22,163,74,0.2);font-size:10px;">Live</span>
+            <button id="closeOverlayBtn" title="Close (Esc)">✕</button>
+          </div>
+        </div>
+
+        <!-- Body: 3 columns -->
+        <div id="dashboardOverlayBody">
+
+          <!-- Col 1: Device List -->
+          <div id="overlayDeviceList">
+            <div class="overlay-list-header">Devices</div>
+            <div class="overlay-device-scroll" id="overlayDeviceScroll"></div>
+          </div>
+
+          <!-- Col 2: Chart area -->
+          <div id="overlayChartArea">
+            <div class="overlay-chart-header">
+              <div>
+                <p class="overlay-chart-title" id="overlayChartTitle">Select a device</p>
+                <p class="overlay-chart-sub" id="overlayChartSub">Availability over time</p>
+              </div>
+              <div class="overlay-health-big" id="overlayHealthBig" style="color:var(--text);">—</div>
+            </div>
+
+            <!-- Timeframe row + download -->
+            <div class="overlay-tf-row">
+              <button class="overlay-tf-btn active" data-ov-tf="today">Today</button>
+              <button class="overlay-tf-btn" data-ov-tf="week">Last Week</button>
+              <button class="overlay-tf-btn" data-ov-tf="month">Last Month</button>
+              <button class="overlay-tf-btn" data-ov-tf="6months">6 Months</button>
+              <button class="overlay-tf-btn" data-ov-tf="custom">Custom Range</button>
+              <button class="overlay-download-btn" id="overlayDownloadChartBtn">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Download Graph
+              </button>
+            </div>
+
+            <!-- Custom Date Inputs (hidden by default) -->
+            <div id="overlayCustomRangeContainer" class="hidden" style="display:flex;align-items:center;gap:12px;margin-bottom:12px;padding:8px 12px;background:var(--surface-strong);border-radius:8px;border:1px solid var(--line);flex-wrap:wrap;">
+              <label style="font-size:11px;font-weight:600;display:flex;align-items:center;gap:6px;margin:0;">From:
+                <input type="date" id="overlayCustomStart" style="min-height:30px;padding:4px 8px;font-size:11px;border-radius:6px;" />
+              </label>
+              <label style="font-size:11px;font-weight:600;display:flex;align-items:center;gap:6px;margin:0;">To:
+                <input type="date" id="overlayCustomEnd" style="min-height:30px;padding:4px 8px;font-size:11px;border-radius:6px;" />
+              </label>
+              <button id="overlayApplyCustomBtn" class="primary-btn" style="min-height:30px;padding:4px 12px;font-size:11px;font-weight:600;border-radius:6px;width:fit-content;margin-left:auto;">Apply Range</button>
+            </div>
+
+            <!-- Chart canvas -->
+            <div class="overlay-canvas-wrap" id="overlayPrimaryCanvasWrap">
+              <canvas id="overlayHistoricalChart"></canvas>
+            </div>
+
+
+            <!-- Live feed mini table below chart -->
+            <div class="overlay-feed-mini" style="max-height:160px;overflow-y:auto;margin-top:10px;">
+              <div class="overlay-section-title" style="padding:8px 12px 6px;">Live System Feed — All Devices</div>
+              <table style="min-width:unset;width:100%;">
+                <thead>
+                  <tr>
+                    <th>Location</th>
+                    <th>Name</th>
+                    <th>Host</th>
+                    <th>Status</th>
+                    <th>Latency</th>
+                    <th>Failures</th>
+                  </tr>
+                </thead>
+                <tbody id="fsStatusRows"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Col 3: Stats panel -->
+          <div id="overlayStatsPanel">
+
+            <!-- Avg availability for selected device -->
+            <div class="overlay-stat-card good">
+              <div class="osc-label">Avg Availability</div>
+              <div class="osc-value" id="overlayAvgHealth">—%</div>
+            </div>
+            <div class="overlay-stat-card blue">
+              <div class="osc-label">Period</div>
+              <div class="osc-value" id="overlayPeriodLabel" style="font-size:14px;font-family:'Outfit',sans-serif;font-weight:600;">Today</div>
+            </div>
+
+            <!-- Device info -->
+            <div class="overlay-stat-card" id="overlayDeviceInfo">
+              <div class="osc-label">Selected Device</div>
+              <div style="font-size:13px;color:var(--text);margin-top:6px;line-height:1.6;" id="overlayDeviceInfoText">—</div>
+            </div>
+
+            <!-- Excel report download -->
+            <button id="overlayDownloadReportBtn">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download Excel Report
+            </button>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

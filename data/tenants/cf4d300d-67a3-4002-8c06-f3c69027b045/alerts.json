@@ -1,0 +1,6 @@
+{
+  "primary_email": "",
+  "additional_emails": "",
+  "long_outage_alert_seconds": 30,
+  "send_short_outage_reports": true
+}
