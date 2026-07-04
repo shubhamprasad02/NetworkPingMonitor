@@ -54,6 +54,7 @@ def make_id(prefix):
 
 
 def get_connection():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_FILE, timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
@@ -122,6 +123,23 @@ def init_db():
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS ping_hourly_summaries (
+                hour_start TEXT NOT NULL,
+                device_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                total_attempts INTEGER NOT NULL DEFAULT 0,
+                successful_pings INTEGER NOT NULL DEFAULT 0,
+                failed_pings INTEGER NOT NULL DEFAULT 0,
+                response_count INTEGER NOT NULL DEFAULT 0,
+                response_sum_ms REAL NOT NULL DEFAULT 0,
+                min_response_ms REAL,
+                max_response_ms REAL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (hour_start, device_id, user_id),
+                FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS reports (
                 id TEXT PRIMARY KEY,
                 company_id TEXT NOT NULL,
@@ -170,6 +188,8 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id);
             CREATE INDEX IF NOT EXISTS idx_ping_logs_device_ts ON ping_logs(device_id, timestamp);
             CREATE INDEX IF NOT EXISTS idx_ping_logs_user_id ON ping_logs(user_id);
+            CREATE INDEX IF NOT EXISTS idx_ping_hourly_summaries_device_ts ON ping_hourly_summaries(device_id, hour_start);
+            CREATE INDEX IF NOT EXISTS idx_ping_hourly_summaries_user_id ON ping_hourly_summaries(user_id);
             CREATE INDEX IF NOT EXISTS idx_reports_company_id ON reports(company_id);
             CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports(user_id);
             CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
@@ -1200,6 +1220,198 @@ def delete_device_ping_logs(device_id):
         conn.execute("DELETE FROM ping_logs WHERE device_id = ?", (device_id,))
         conn.commit()
         conn.close()
+
+
+def _parse_latency_ms(value):
+    if value is None:
+        return None
+
+    text = str(value).strip()
+    if not text or text == "--":
+        return None
+
+    match = re.search(r"(\d+(?:\.\d+)?)", text)
+    if not match:
+        return None
+
+    parsed = float(match.group(1))
+    if text.startswith("<"):
+        return 1.0
+    return parsed
+
+
+def refresh_ping_history(retention_hours=24):
+    cutoff = datetime.now() - timedelta(hours=retention_hours)
+    cutoff_iso = cutoff.isoformat(timespec="seconds")
+    archived = 0
+
+    with DB_LOCK:
+        conn = get_connection()
+        rows = conn.execute(
+            """
+            SELECT device_id, user_id, timestamp, status, latency
+            FROM ping_logs
+            WHERE timestamp < ?
+            ORDER BY device_id ASC, user_id ASC, timestamp ASC
+            """,
+            (cutoff_iso,),
+        ).fetchall()
+
+        if not rows:
+            conn.close()
+            return {"archived": 0, "deleted": 0}
+
+        grouped = {}
+        for row in rows:
+            timestamp = datetime.fromisoformat(row["timestamp"])
+            hour_start = timestamp.replace(minute=0, second=0, microsecond=0).isoformat(timespec="seconds")
+            key = (hour_start, row["device_id"], row["user_id"])
+            bucket = grouped.setdefault(
+                key,
+                {
+                    "total_attempts": 0,
+                    "successful_pings": 0,
+                    "failed_pings": 0,
+                    "response_count": 0,
+                    "response_sum_ms": 0.0,
+                    "min_response_ms": None,
+                    "max_response_ms": None,
+                },
+            )
+
+            bucket["total_attempts"] += 1
+            if row["status"] == "ONLINE":
+                bucket["successful_pings"] += 1
+            else:
+                bucket["failed_pings"] += 1
+
+            latency_ms = _parse_latency_ms(row["latency"])
+            if latency_ms is not None:
+                bucket["response_count"] += 1
+                bucket["response_sum_ms"] += latency_ms
+                bucket["min_response_ms"] = (
+                    latency_ms
+                    if bucket["min_response_ms"] is None
+                    else min(bucket["min_response_ms"], latency_ms)
+                )
+                bucket["max_response_ms"] = (
+                    latency_ms
+                    if bucket["max_response_ms"] is None
+                    else max(bucket["max_response_ms"], latency_ms)
+                )
+
+        for (hour_start, device_id, user_id), bucket in grouped.items():
+            conn.execute(
+                """
+                INSERT INTO ping_hourly_summaries
+                (hour_start, device_id, user_id, total_attempts, successful_pings,
+                 failed_pings, response_count, response_sum_ms, min_response_ms,
+                 max_response_ms, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(hour_start, device_id, user_id) DO UPDATE SET
+                    total_attempts = ping_hourly_summaries.total_attempts + excluded.total_attempts,
+                    successful_pings = ping_hourly_summaries.successful_pings + excluded.successful_pings,
+                    failed_pings = ping_hourly_summaries.failed_pings + excluded.failed_pings,
+                    response_count = ping_hourly_summaries.response_count + excluded.response_count,
+                    response_sum_ms = ping_hourly_summaries.response_sum_ms + excluded.response_sum_ms,
+                    min_response_ms = CASE
+                        WHEN excluded.min_response_ms IS NULL THEN ping_hourly_summaries.min_response_ms
+                        WHEN ping_hourly_summaries.min_response_ms IS NULL THEN excluded.min_response_ms
+                        WHEN excluded.min_response_ms < ping_hourly_summaries.min_response_ms THEN excluded.min_response_ms
+                        ELSE ping_hourly_summaries.min_response_ms
+                    END,
+                    max_response_ms = CASE
+                        WHEN excluded.max_response_ms IS NULL THEN ping_hourly_summaries.max_response_ms
+                        WHEN ping_hourly_summaries.max_response_ms IS NULL THEN excluded.max_response_ms
+                        WHEN excluded.max_response_ms > ping_hourly_summaries.max_response_ms THEN excluded.max_response_ms
+                        ELSE ping_hourly_summaries.max_response_ms
+                    END,
+                    created_at = excluded.created_at
+                """,
+                (
+                    hour_start,
+                    device_id,
+                    user_id,
+                    bucket["total_attempts"],
+                    bucket["successful_pings"],
+                    bucket["failed_pings"],
+                    bucket["response_count"],
+                    bucket["response_sum_ms"],
+                    bucket["min_response_ms"],
+                    bucket["max_response_ms"],
+                    now_iso(),
+                ),
+            )
+            archived += 1
+
+        conn.execute("DELETE FROM ping_logs WHERE timestamp < ?", (cutoff_iso,))
+        conn.commit()
+        conn.close()
+
+    return {"archived": archived, "deleted": len(rows)}
+
+
+def get_device_ping_records(device_id, user_id, start_iso, end_iso, retention_hours=24):
+    cutoff = datetime.now() - timedelta(hours=retention_hours)
+    cutoff_iso = cutoff.isoformat(timespec="seconds")
+    raw_start = max(start_iso, cutoff_iso)
+
+    with DB_LOCK:
+        conn = get_connection()
+        raw_rows = conn.execute(
+            """
+            SELECT timestamp, status, latency
+            FROM ping_logs
+            WHERE device_id = ? AND user_id = ? AND timestamp >= ? AND timestamp <= ?
+            ORDER BY timestamp ASC
+            """,
+            (device_id, user_id, raw_start, end_iso),
+        ).fetchall()
+        summary_rows = conn.execute(
+            """
+            SELECT hour_start, total_attempts, successful_pings, failed_pings,
+                   response_count, response_sum_ms, min_response_ms, max_response_ms
+            FROM ping_hourly_summaries
+            WHERE device_id = ? AND user_id = ? AND hour_start >= ? AND hour_start <= ?
+            ORDER BY hour_start ASC
+            """,
+            (device_id, user_id, start_iso, end_iso),
+        ).fetchall()
+        conn.close()
+
+    records = []
+
+    for row in raw_rows:
+        latency_ms = _parse_latency_ms(row["latency"])
+        records.append(
+            {
+                "timestamp": row["timestamp"],
+                "source": "raw",
+                "attempts": 1,
+                "online": 1 if row["status"] == "ONLINE" else 0,
+                "response_count": 1 if latency_ms is not None else 0,
+                "response_sum_ms": latency_ms or 0.0,
+                "min_response_ms": latency_ms,
+                "max_response_ms": latency_ms,
+            }
+        )
+
+    for row in summary_rows:
+        records.append(
+            {
+                "timestamp": row["hour_start"],
+                "source": "summary",
+                "attempts": row["total_attempts"],
+                "online": row["successful_pings"],
+                "response_count": row["response_count"],
+                "response_sum_ms": row["response_sum_ms"] or 0.0,
+                "min_response_ms": row["min_response_ms"],
+                "max_response_ms": row["max_response_ms"],
+            }
+        )
+
+    records.sort(key=lambda item: item["timestamp"])
+    return records
 
 
 # ---------------------------------------------------------------------------

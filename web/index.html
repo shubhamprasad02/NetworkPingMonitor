@@ -90,7 +90,7 @@
           <span class="pulse-dot"></span>
           <div>
             <strong>Live monitoring active</strong>
-            <p>Ping checks every 30 seconds</p>
+            <p>Ping checks every 5 seconds</p>
           </div>
         </div>
 
@@ -247,7 +247,7 @@
           <div class="panel">
             <div class="panel-header">
               <h3 style="font-weight:500;">Incident Reports</h3>
-              <button id="downloadReportBtn" class="secondary-btn">Export Log</button>
+              <button id="downloadReportBtn" class="secondary-btn">Export Summary</button>
             </div>
             <div class="incident-filter-bar">
               <div class="device-dropdown-wrap">
@@ -347,9 +347,9 @@
             <!-- Timeframe row + download -->
             <div class="overlay-tf-row">
               <button class="overlay-tf-btn active" data-ov-tf="today">Today</button>
-              <button class="overlay-tf-btn" data-ov-tf="week">Last Week</button>
-              <button class="overlay-tf-btn" data-ov-tf="month">Last Month</button>
-              <button class="overlay-tf-btn" data-ov-tf="6months">6 Months</button>
+              <button class="overlay-tf-btn" data-ov-tf="week">Last 7 Days</button>
+              <button class="overlay-tf-btn" data-ov-tf="month">Last 30 Days</button>
+              <button class="overlay-tf-btn" data-ov-tf="6months">Last 6 Months</button>
               <button class="overlay-tf-btn" data-ov-tf="custom">Custom Range</button>
               <button class="overlay-download-btn" id="overlayDownloadChartBtn">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>

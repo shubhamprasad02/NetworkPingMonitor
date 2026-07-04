@@ -708,9 +708,9 @@ async function loadOverlayChart() {
   const periodEl = document.querySelector("#overlayPeriodLabel");
   if (periodEl) {
     if (ovActiveTimeframe === "today") periodEl.textContent = "Today";
-    else if (ovActiveTimeframe === "week") periodEl.textContent = "Last Week";
-    else if (ovActiveTimeframe === "month") periodEl.textContent = "Last Month";
-    else if (ovActiveTimeframe === "6months") periodEl.textContent = "6 Months";
+    else if (ovActiveTimeframe === "week") periodEl.textContent = "Last 7 Days";
+    else if (ovActiveTimeframe === "month") periodEl.textContent = "Last 30 Days";
+    else if (ovActiveTimeframe === "6months") periodEl.textContent = "Last 6 Months";
     else if (ovActiveTimeframe === "custom") periodEl.textContent = "Custom Range";
   }
 
@@ -906,9 +906,9 @@ document.querySelectorAll("[data-ov-tf]").forEach((btn) => {
     const periodEl = document.querySelector("#overlayPeriodLabel");
     if (periodEl) {
       if (ovActiveTimeframe === "today") periodEl.textContent = "Today";
-      else if (ovActiveTimeframe === "week") periodEl.textContent = "Last Week";
-      else if (ovActiveTimeframe === "month") periodEl.textContent = "Last Month";
-      else if (ovActiveTimeframe === "6months") periodEl.textContent = "6 Months";
+      else if (ovActiveTimeframe === "week") periodEl.textContent = "Last 7 Days";
+      else if (ovActiveTimeframe === "month") periodEl.textContent = "Last 30 Days";
+      else if (ovActiveTimeframe === "6months") periodEl.textContent = "Last 6 Months";
       else if (ovActiveTimeframe === "custom") periodEl.textContent = "Custom Range";
     }
 
@@ -969,7 +969,7 @@ if (overlayDownloadChartBtn) {
     // Title header
     tmpCtx.fillStyle = "#182033";
     tmpCtx.font = "bold 15px 'Outfit', sans-serif";
-    const tfDisplayName = ovActiveTimeframe === "today" ? "Today" : ovActiveTimeframe === "week" ? "Last Week" : ovActiveTimeframe === "month" ? "Last Month" : ovActiveTimeframe === "6months" ? "6 Months" : `Custom (${document.getElementById("overlayCustomStart")?.value || ""} to ${document.getElementById("overlayCustomEnd")?.value || ""})`;
+    const tfDisplayName = ovActiveTimeframe === "today" ? "Today" : ovActiveTimeframe === "week" ? "Last 7 Days" : ovActiveTimeframe === "month" ? "Last 30 Days" : ovActiveTimeframe === "6months" ? "Last 6 Months" : `Custom (${document.getElementById("overlayCustomStart")?.value || ""} to ${document.getElementById("overlayCustomEnd")?.value || ""})`;
     tmpCtx.fillText(`NetWatch Graph Report: ${device ? device.name : "Device"} (${tfDisplayName})`, 20, 35);
     tmpCtx.font = "500 11px 'Outfit', sans-serif";
     tmpCtx.fillStyle = "#697386";
@@ -984,8 +984,8 @@ if (overlayDownloadChartBtn) {
     // Map internal timeframe code to clean filename labels
     let tfLabel = "Uptime";
     if (ovActiveTimeframe === "today") tfLabel = "Today";
-    else if (ovActiveTimeframe === "week") tfLabel = "Last_Week";
-    else if (ovActiveTimeframe === "month") tfLabel = "Last_Month";
+    else if (ovActiveTimeframe === "week") tfLabel = "Last_7_Days";
+    else if (ovActiveTimeframe === "month") tfLabel = "Last_30_Days";
     else if (ovActiveTimeframe === "6months") tfLabel = "Last_6_Months";
     else if (ovActiveTimeframe === "custom") {
       const s = document.getElementById("overlayCustomStart")?.value || "";
@@ -1161,9 +1161,18 @@ if (window.exportDevicesBtn) exportDevicesBtn.addEventListener("click", () => {
 });
 
 if (window.downloadReportBtn) downloadReportBtn.addEventListener("click", () => {
-  const selected = activeReportIp === "all" ? reports : reports.filter((r) => r.ip === activeReportIp);
-  const rows = ["Date,Location,Device Name,IP Address,Offline Time,Online Time,Downtime", ...selected.map((r) => `${r.date},${r.location},${r.name},${r.ip},${r.offline},${r.online},${r.downtime}`)];
-  downloadCsv("outage_report.csv", rows);
+  if (!activeCompanyId) return;
+  const params = new URLSearchParams({
+    timeframe: ovActiveTimeframe,
+    device_id: selectedDeviceId || "",
+  });
+  if (ovActiveTimeframe === "custom") {
+    const startVal = document.getElementById("overlayCustomStart")?.value || "";
+    const endVal = document.getElementById("overlayCustomEnd")?.value || "";
+    params.append("start", startVal);
+    params.append("end", endVal);
+  }
+  window.location.href = `${API_BASE}/api/companies/${activeCompanyId}/analytics/export?${params.toString()}`;
 });
 
 if (window.showAddCompanyBtn) showAddCompanyBtn.addEventListener("click", () => addCompanyForm.classList.remove("hidden"));

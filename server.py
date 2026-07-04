@@ -28,13 +28,15 @@ WEB_DIR = BASE_DIR / "web"
 HOST = "0.0.0.0"  # Adjusted to allow connections from other devices seamlessly
 PORT = 8080
 
-PING_TIMEOUT_SECONDS = 1
+PING_TIMEOUT_SECONDS = 2
 OFFLINE_AFTER_FAILURES = 3
 ONLINE_AFTER_SUCCESSES = 1
 MAX_WORKERS = 30
+PING_HISTORY_REFRESH_SECONDS = 300
 
 STATE_LOCK = threading.Lock()
 MONITOR_STATE = {}
+LAST_PING_HISTORY_REFRESH_AT = None
 
 
 def now_iso():
@@ -111,8 +113,8 @@ def clean_device(data, company_id, user_id):
 
 def build_ping_command(ip):
     if os.name == "nt":
-        return ["ping", "-n", "1", "-w", str(PING_TIMEOUT_SECONDS * 1000), ip]
-    return ["ping", "-c", "1", "-W", str(PING_TIMEOUT_SECONDS), ip]
+        return ["ping", "-4", "-n", "1", "-w", str(PING_TIMEOUT_SECONDS * 1000), ip]
+    return ["ping", "-4", "-c", "1", "-W", str(PING_TIMEOUT_SECONDS), ip]
 
 
 def parse_ping_time(output):
@@ -124,13 +126,28 @@ def parse_ping_time(output):
     return f"{match.group(1)} ms"
 
 
+def parse_latency_ms(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text == "--":
+        return None
+    match = re.search(r"(\d+(?:\.\d+)?)", text)
+    if not match:
+        return None
+    amount = float(match.group(1))
+    if text.startswith("<"):
+        return 1.0
+    return amount
+
+
 def ping_device(device):
     try:
         result = subprocess.run(
             build_ping_command(device["ip"]),
             capture_output=True,
             text=True,
-            timeout=PING_TIMEOUT_SECONDS + 1,
+            timeout=PING_TIMEOUT_SECONDS + 4,
         )
     except Exception:
         return {**device, "raw_status": "OFFLINE", "ping": "--"}
@@ -143,6 +160,294 @@ def ping_device(device):
 def format_duration(start_iso, end_dt):
     start = datetime.fromisoformat(start_iso)
     return str(end_dt - start).split(".")[0]
+
+
+def duration_to_seconds(value):
+    if not value:
+        return 0.0
+    text = str(value).strip()
+    match = re.fullmatch(r"(?:(\d+)\s+day[s]?,\s*)?(\d+):(\d+):(\d+)", text)
+    if not match:
+        return 0.0
+    days = int(match.group(1) or 0)
+    hours = int(match.group(2))
+    minutes = int(match.group(3))
+    seconds = int(match.group(4))
+    return float((days * 24 * 3600) + (hours * 3600) + (minutes * 60) + seconds)
+
+
+def format_seconds(seconds):
+    if seconds is None:
+        return "-"
+    total = max(0, int(round(seconds)))
+    days, remainder = divmod(total, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, secs = divmod(remainder, 60)
+    time_part = f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    if days:
+        return f"{days} day{'s' if days != 1 else ''}, {time_part}"
+    return time_part
+
+
+def format_response_time(value):
+    if value is None:
+        return "-"
+    if value < 1:
+        return "<1 ms"
+    if abs(value - round(value)) < 0.05:
+        return f"{int(round(value))} ms"
+    return f"{round(value, 1)} ms"
+
+
+def maybe_refresh_ping_history():
+    global LAST_PING_HISTORY_REFRESH_AT
+
+    now = datetime.now()
+    if LAST_PING_HISTORY_REFRESH_AT and (now - LAST_PING_HISTORY_REFRESH_AT).total_seconds() < PING_HISTORY_REFRESH_SECONDS:
+        return
+
+    database.refresh_ping_history()
+    LAST_PING_HISTORY_REFRESH_AT = now
+
+
+def parse_report_start(report):
+    try:
+        return datetime.strptime(f"{report['date']} {report['offline']}", "%d-%m-%Y %H:%M:%S")
+    except Exception:
+        return None
+
+
+def incident_overlap_seconds(start_dt, end_dt, incident_start, incident_duration):
+    incident_end = incident_start + timedelta(seconds=incident_duration)
+    overlap_start = max(start_dt, incident_start)
+    overlap_end = min(end_dt, incident_end)
+    return max(0.0, (overlap_end - overlap_start).total_seconds())
+
+
+def build_incident_stats(device_id, reports, start_dt, end_dt):
+    total_seconds = 0.0
+    incident_count = 0
+    longest_seconds = 0.0
+
+    for report in reports:
+        if report.get("device_id") != device_id:
+            continue
+        incident_start = parse_report_start(report)
+        if not incident_start:
+            continue
+        incident_duration = duration_to_seconds(report.get("downtime"))
+        overlap_seconds = incident_overlap_seconds(start_dt, end_dt, incident_start, incident_duration)
+        if overlap_seconds <= 0:
+            continue
+        incident_count += 1
+        total_seconds += overlap_seconds
+        longest_seconds = max(longest_seconds, overlap_seconds)
+
+    with STATE_LOCK:
+        state = MONITOR_STATE.get(device_id)
+        if state and state.get("status") == "OFFLINE" and state.get("offline_start"):
+            try:
+                live_start = datetime.fromisoformat(state["offline_start"])
+            except Exception:
+                live_start = None
+            if live_start:
+                live_duration = max(0.0, (min(end_dt, datetime.now()) - live_start).total_seconds())
+                overlap_seconds = incident_overlap_seconds(start_dt, end_dt, live_start, live_duration)
+                if overlap_seconds > 0:
+                    incident_count += 1
+                    total_seconds += overlap_seconds
+                    longest_seconds = max(longest_seconds, overlap_seconds)
+
+    average_seconds = total_seconds / incident_count if incident_count else 0.0
+    return {
+        "total_offline_seconds": total_seconds,
+        "incident_count": incident_count,
+        "longest_offline_seconds": longest_seconds,
+        "average_offline_seconds": average_seconds,
+    }
+
+
+def aggregate_ping_records(records, timeframe, start_dt, end_dt):
+    def new_bucket():
+        return {
+            "total": 0,
+            "online": 0,
+            "response_count": 0,
+            "response_sum_ms": 0.0,
+            "min_response_ms": None,
+            "max_response_ms": None,
+        }
+
+    def ingest(bucket, record):
+        attempts = int(record.get("attempts", 0) or 0)
+        online = int(record.get("online", 0) or 0)
+        response_count = int(record.get("response_count", 0) or 0)
+        response_sum_ms = float(record.get("response_sum_ms", 0) or 0)
+
+        bucket["total"] += attempts
+        bucket["online"] += online
+        bucket["response_count"] += response_count
+        bucket["response_sum_ms"] += response_sum_ms
+
+        min_response_ms = record.get("min_response_ms")
+        max_response_ms = record.get("max_response_ms")
+        if min_response_ms is not None:
+            bucket["min_response_ms"] = (
+                min_response_ms
+                if bucket["min_response_ms"] is None
+                else min(bucket["min_response_ms"], min_response_ms)
+            )
+        if max_response_ms is not None:
+            bucket["max_response_ms"] = (
+                max_response_ms
+                if bucket["max_response_ms"] is None
+                else max(bucket["max_response_ms"], max_response_ms)
+            )
+
+    if timeframe == "today":
+        chart_type = "bar"
+        buckets = ["12 AM - 6 AM", "6 AM - 12 PM", "12 PM - 6 PM", "6 PM - 12 AM"]
+        bucket_data = {b: new_bucket() for b in buckets}
+        for record in records:
+            try:
+                ts = datetime.fromisoformat(record["timestamp"])
+                h = ts.hour
+                if 0 <= h < 6:
+                    key = "12 AM - 6 AM"
+                elif 6 <= h < 12:
+                    key = "6 AM - 12 PM"
+                elif 12 <= h < 18:
+                    key = "12 PM - 6 PM"
+                else:
+                    key = "6 PM - 12 AM"
+                ingest(bucket_data[key], record)
+            except Exception:
+                continue
+
+        labels = buckets
+        uptime_data = []
+        latency_data = []
+        for b in buckets:
+            d = bucket_data[b]
+            uptime_pct = round((d["online"] / d["total"]) * 100) if d["total"] > 0 else None
+            avg_lat = round(d["response_sum_ms"] / d["response_count"], 1) if d["response_count"] > 0 else None
+            uptime_data.append(uptime_pct)
+            latency_data.append(avg_lat)
+
+    elif timeframe == "week":
+        chart_type = "bar"
+        group_format = "%Y-%m-%d"
+        display_format = "%b %d"
+        buckets = []
+        curr = datetime(start_dt.year, start_dt.month, start_dt.day)
+        while curr.date() <= end_dt.date():
+            buckets.append(curr.strftime(group_format))
+            curr += timedelta(days=1)
+
+        bucket_data = {b: new_bucket() for b in buckets}
+        for record in records:
+            try:
+                ts = datetime.fromisoformat(record["timestamp"])
+                key = ts.strftime(group_format)
+                if key in bucket_data:
+                    ingest(bucket_data[key], record)
+            except Exception:
+                continue
+
+        labels = []
+        uptime_data = []
+        latency_data = []
+        for b in buckets:
+            try:
+                dt = datetime.strptime(b, group_format)
+                labels.append(dt.strftime(display_format))
+            except Exception:
+                labels.append(b)
+            d = bucket_data[b]
+            uptime_pct = round((d["online"] / d["total"]) * 100) if d["total"] > 0 else None
+            avg_lat = round(d["response_sum_ms"] / d["response_count"], 1) if d["response_count"] > 0 else None
+            uptime_data.append(uptime_pct)
+            latency_data.append(avg_lat)
+
+    elif timeframe == "month":
+        chart_type = "bar"
+        buckets = ["Week 1", "Week 2", "Week 3", "Week 4", "Week 5"]
+        bucket_data = {b: new_bucket() for b in buckets}
+        start_date_only = start_dt.date()
+        for record in records:
+            try:
+                ts = datetime.fromisoformat(record["timestamp"])
+                delta_days = (ts.date() - start_date_only).days
+                if delta_days < 7:
+                    key = "Week 1"
+                elif delta_days < 14:
+                    key = "Week 2"
+                elif delta_days < 21:
+                    key = "Week 3"
+                elif delta_days < 28:
+                    key = "Week 4"
+                else:
+                    key = "Week 5"
+                ingest(bucket_data[key], record)
+            except Exception:
+                continue
+
+        labels = buckets
+        uptime_data = []
+        latency_data = []
+        for b in buckets:
+            d = bucket_data[b]
+            uptime_pct = round((d["online"] / d["total"]) * 100) if d["total"] > 0 else None
+            avg_lat = round(d["response_sum_ms"] / d["response_count"], 1) if d["response_count"] > 0 else None
+            uptime_data.append(uptime_pct)
+            latency_data.append(avg_lat)
+
+    else:
+        chart_type = "bar"
+        group_format = "%Y-%m-%d"
+        display_format = "%b %d"
+        buckets = []
+        curr = datetime(start_dt.year, start_dt.month, start_dt.day)
+        while curr.date() <= end_dt.date():
+            buckets.append(curr.strftime(group_format))
+            curr += timedelta(days=1)
+
+        bucket_data = {b: new_bucket() for b in buckets}
+        for record in records:
+            try:
+                ts = datetime.fromisoformat(record["timestamp"])
+                key = ts.strftime(group_format)
+                if key in bucket_data:
+                    ingest(bucket_data[key], record)
+            except Exception:
+                continue
+
+        labels = []
+        uptime_data = []
+        latency_data = []
+        for b in buckets:
+            try:
+                dt = datetime.strptime(b, group_format)
+                labels.append(dt.strftime(display_format))
+            except Exception:
+                labels.append(b)
+            d = bucket_data[b]
+            uptime_pct = round((d["online"] / d["total"]) * 100) if d["total"] > 0 else None
+            avg_lat = round(d["response_sum_ms"] / d["response_count"], 1) if d["response_count"] > 0 else None
+            uptime_data.append(uptime_pct)
+            latency_data.append(avg_lat)
+
+    total_pings = sum(int(record.get("attempts", 0) or 0) for record in records)
+    online_pings = sum(int(record.get("online", 0) or 0) for record in records)
+    overall_avg = round((online_pings / total_pings) * 100) if total_pings > 0 else 100
+
+    return {
+        "labels": labels,
+        "uptime": uptime_data,
+        "latency": latency_data,
+        "chartType": chart_type,
+        "overallAvg": overall_avg,
+    }
 
 
 def update_status(raw_result, checked_at):
@@ -272,6 +577,7 @@ def update_status(raw_result, checked_at):
 
 
 def get_live_status(company_id):
+    maybe_refresh_ping_history()
     devices = company_devices(company_id)
     if not devices:
         return []
@@ -335,14 +641,14 @@ def parse_timeframe(timeframe, start_str, end_str):
     if timeframe == "today":
         start_dt = datetime(now.year, now.month, now.day)
         end_dt = now
-    elif timeframe == "week":
-        start_dt = now - timedelta(days=7)
+    elif timeframe in ("week", "7days"):
+        start_dt = datetime(now.year, now.month, now.day) - timedelta(days=7)
         end_dt = now
-    elif timeframe == "month":
-        start_dt = now - timedelta(days=30)
+    elif timeframe in ("month", "30days"):
+        start_dt = datetime(now.year, now.month, now.day) - timedelta(days=30)
         end_dt = now
-    elif timeframe == "6months":
-        start_dt = now - timedelta(days=180)
+    elif timeframe in ("6months", "6_months"):
+        start_dt = datetime(now.year, now.month, now.day) - timedelta(days=180)
         end_dt = now
     elif timeframe == "custom":
         try:
@@ -621,6 +927,7 @@ class Handler(BaseHTTPRequestHandler):
             user = self.require_user()
             if not user:
                 return
+            maybe_refresh_ping_history()
             device_id = unquote(match.group(1))
             device = database.get_device_for_user(device_id, user["id"])
             if not device:
@@ -635,12 +942,12 @@ class Handler(BaseHTTPRequestHandler):
             start_iso = start_dt.isoformat(timespec="seconds")
             end_iso = end_dt.isoformat(timespec="seconds")
             
-            rows_dict = database.get_device_ping_logs(device_id, user["id"], start_iso, end_iso)
-            total_checks = len(rows_dict)
-            online_checks = sum(1 for r in rows_dict if r["status"] == "ONLINE")
+            rows_dict = database.get_device_ping_records(device_id, user["id"], start_iso, end_iso)
+            total_checks = sum(int(r.get("attempts", 0) or 0) for r in rows_dict)
+            online_checks = sum(int(r.get("online", 0) or 0) for r in rows_dict)
             avg_health = round((online_checks / total_checks) * 100) if total_checks > 0 else 100
             
-            aggregation = aggregate_pings(rows_dict, timeframe, start_dt, end_dt)
+            aggregation = aggregate_ping_records(rows_dict, timeframe, start_dt, end_dt)
             
             today_hourly = None
             if timeframe == "today":
@@ -661,9 +968,8 @@ class Handler(BaseHTTPRequestHandler):
                         ts = datetime.fromisoformat(r["timestamp"])
                         h = ts.hour
                         lbl = hourly_labels[h]
-                        bucket_counts[lbl]["total"] += 1
-                        if r["status"] == "ONLINE":
-                            bucket_counts[lbl]["online"] += 1
+                        bucket_counts[lbl]["total"] += int(r.get("attempts", 0) or 0)
+                        bucket_counts[lbl]["online"] += int(r.get("online", 0) or 0)
                     except Exception:
                         continue
                 
@@ -710,6 +1016,120 @@ class Handler(BaseHTTPRequestHandler):
             devices = company_devices(company_id)
             if device_id:
                 devices = [d for d in devices if d["id"] == device_id]
+            reports = database.company_reports(company_id, user["id"])
+
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Summary"
+
+            headers = [
+                "Device Name",
+                "IP Address",
+                "Monitoring Duration",
+                "Total Ping Attempts",
+                "Successful Pings",
+                "Failed Pings",
+                "Uptime Percentage",
+                "Downtime Percentage",
+                "Total Offline Time",
+                "Number of Offline Incidents",
+                "Longest Offline Incident",
+                "Average Offline Duration",
+                "Average Response Time",
+                "Minimum Response Time",
+                "Maximum Response Time",
+            ]
+
+            ws.append([f"Monitoring Summary Report | {start_dt.strftime('%d-%m-%Y %H:%M:%S')} to {end_dt.strftime('%d-%m-%Y %H:%M:%S')} | Timeframe: {timeframe}"])
+            ws.append([])
+            ws.append(headers)
+
+            for cell in ws[3]:
+                cell.font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+                cell.fill = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+
+            reports_by_device = {}
+            for report in reports:
+                reports_by_device.setdefault(report["device_id"], []).append(report)
+
+            for dev in devices:
+                records = database.get_device_ping_records(dev["id"], user["id"], start_iso, end_iso)
+                ping_total = sum(int(record.get("attempts", 0) or 0) for record in records)
+                ping_success = sum(int(record.get("online", 0) or 0) for record in records)
+                ping_fail = max(0, ping_total - ping_success)
+                response_count = sum(int(record.get("response_count", 0) or 0) for record in records)
+                response_sum = sum(float(record.get("response_sum_ms", 0) or 0) for record in records)
+
+                min_response = None
+                max_response = None
+                for record in records:
+                    if record.get("min_response_ms") is not None:
+                        min_response = record["min_response_ms"] if min_response is None else min(min_response, record["min_response_ms"])
+                    if record.get("max_response_ms") is not None:
+                        max_response = record["max_response_ms"] if max_response is None else max(max_response, record["max_response_ms"])
+
+                incident_stats = build_incident_stats(dev["id"], reports_by_device.get(dev["id"], []), start_dt, end_dt)
+                uptime_pct = round((ping_success / ping_total) * 100, 1) if ping_total else 100.0
+                downtime_pct = round(100 - uptime_pct, 1)
+                avg_response = round(response_sum / response_count, 1) if response_count else None
+
+                ws.append([
+                    dev["name"],
+                    dev["ip"],
+                    str(end_dt - start_dt).split(".")[0],
+                    ping_total,
+                    ping_success,
+                    ping_fail,
+                    f"{uptime_pct}%",
+                    f"{downtime_pct}%",
+                    format_seconds(incident_stats["total_offline_seconds"]),
+                    incident_stats["incident_count"],
+                    format_seconds(incident_stats["longest_offline_seconds"]),
+                    format_seconds(incident_stats["average_offline_seconds"]),
+                    format_response_time(avg_response),
+                    format_response_time(min_response),
+                    format_response_time(max_response),
+                ])
+
+            for col_idx in range(1, len(headers) + 1):
+                col_letter = get_column_letter(col_idx)
+                max_len = max(
+                    (len(str(ws.cell(row=row_idx, column=col_idx).value or "")) for row_idx in range(1, ws.max_row + 1)),
+                    default=10,
+                )
+                ws.column_dimensions[col_letter].width = max(max_len + 2, 12)
+
+            output = io.BytesIO()
+            wb.save(output)
+            output.seek(0)
+            excel_bytes = output.read()
+
+            def sanitize_filename_part(text):
+                return re.sub(r"[^a-zA-Z0-9_\-]", "_", str(text).strip())
+
+            dev_name = sanitize_filename_part(devices[0]["name"]) if devices else "All_Devices"
+            dev_loc = sanitize_filename_part(devices[0]["location"]) if devices else "Global"
+
+            if timeframe == "today":
+                date_str = start_dt.strftime("%Y-%m-%d")
+                filename = f"Summary_{dev_name}_{dev_loc}_{date_str}.xlsx"
+            elif timeframe in ("week", "7days"):
+                filename = f"Summary_{dev_name}_{dev_loc}_Last_7_Days_{start_dt.strftime('%Y%m%d')}_to_{end_dt.strftime('%Y%m%d')}.xlsx"
+            elif timeframe in ("month", "30days"):
+                filename = f"Summary_{dev_name}_{dev_loc}_Last_30_Days_{start_dt.strftime('%Y%m%d')}_to_{end_dt.strftime('%Y%m%d')}.xlsx"
+            elif timeframe in ("6months", "6_months"):
+                filename = f"Summary_{dev_name}_{dev_loc}_Last_6_Months_{start_dt.strftime('%Y%m%d')}_to_{end_dt.strftime('%Y%m%d')}.xlsx"
+            else:
+                filename = f"Summary_{dev_name}_{dev_loc}_Custom_{start_dt.strftime('%Y%m%d')}_to_{end_dt.strftime('%Y%m%d')}.xlsx"
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            self.send_header("Content-Length", str(len(excel_bytes)))
+            self.end_headers()
+            self.wfile.write(excel_bytes)
+            return
             
             wb = Workbook()
             default_sheet = wb.active
