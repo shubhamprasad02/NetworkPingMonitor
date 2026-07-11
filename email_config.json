@@ -1,7 +1,7 @@
 {
   "sender_email": "mailproject.alert@gmail.com",
   "sender_password": "pergrxpaonrdgclh",
-  "receiver_email": "shubhamprashad007@gmail.com",
+  "receiver_email": "",
   "smtp_server": "smtp.gmail.com",
   "smtp_port": 587,
   "long_outage_alert_seconds": 30,

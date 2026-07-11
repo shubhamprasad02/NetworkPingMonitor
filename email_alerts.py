@@ -1,5 +1,6 @@
 import html
 import json
+import os
 import smtplib
 from datetime import timedelta
 from email.message import EmailMessage
@@ -8,33 +9,64 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = BASE_DIR / "email_config.json"
 
+# No secrets live in source code. Safe, non-secret defaults only --
+# sender_password must come from email_config.json (gitignored) or an
+# environment variable. It is intentionally left blank here.
 DEFAULT_CONFIG = {
-    "sender_email": "mailproject.alert@gmail.com",
-    "sender_password": "pergrxpaonrdgclh",
-    "receiver_email": "shubhamprashad007@gmail.com", 
+    "sender_email": "",
+    "sender_password": "",
+    "receiver_email": "",
     "smtp_server": "smtp.gmail.com",
     "smtp_port": 587,
     "long_outage_alert_seconds": 30,
     "short_outage_monitor_seconds": 300,
 }
 
+
 def load_email_config():
-    if not CONFIG_FILE.exists():
-        return DEFAULT_CONFIG.copy()
-    try:
-        with CONFIG_FILE.open("r", encoding="utf-8") as file:
-            config = json.load(file)
-            return {**DEFAULT_CONFIG, **config}
-    except Exception:
-        return DEFAULT_CONFIG.copy()
+    """Load config with priority: environment variables > email_config.json > defaults.
+
+    This lets you keep email_config.json out of git entirely (recommended) and
+    instead set SENDER_EMAIL / SENDER_PASSWORD / RECEIVER_EMAIL as environment
+    variables in Render's dashboard (Environment tab).
+    """
+    config = DEFAULT_CONFIG.copy()
+
+    if CONFIG_FILE.exists():
+        try:
+            with CONFIG_FILE.open("r", encoding="utf-8") as file:
+                config.update(json.load(file))
+        except Exception:
+            pass
+
+    env_overrides = {
+        "sender_email": os.environ.get("SENDER_EMAIL"),
+        "sender_password": os.environ.get("SENDER_PASSWORD"),
+        "receiver_email": os.environ.get("RECEIVER_EMAIL"),
+        "smtp_server": os.environ.get("SMTP_SERVER"),
+        "smtp_port": os.environ.get("SMTP_PORT"),
+    }
+    for key, value in env_overrides.items():
+        if value:
+            config[key] = value
+
+    return config
+
 
 EMAIL_CONFIG = load_email_config()
 SENDER_EMAIL = EMAIL_CONFIG["sender_email"]
-SENDER_PASSWORD = EMAIL_CONFIG["sender_password"].replace(" ", "")
+SENDER_PASSWORD = str(EMAIL_CONFIG["sender_password"]).replace(" ", "")
 SMTP_SERVER = EMAIL_CONFIG["smtp_server"]
 SMTP_PORT = int(EMAIL_CONFIG["smtp_port"])
 LONG_OUTAGE_ALERT_SECONDS = int(EMAIL_CONFIG["long_outage_alert_seconds"])
 SHORT_OUTAGE_MONITOR_SECONDS = int(EMAIL_CONFIG.get("short_outage_monitor_seconds", 300))
+EMAIL_ALERTS_ENABLED = bool(SENDER_EMAIL and SENDER_PASSWORD)
+
+if not EMAIL_ALERTS_ENABLED:
+    print(
+        "[email_alerts] WARNING: SENDER_EMAIL / SENDER_PASSWORD not set. "
+        "Email alerts are disabled until you set them (env vars or email_config.json)."
+    )
 
 
 def get_long_outage_seconds(alert_config=None):
@@ -141,6 +173,44 @@ def send_short_outage_report(outage, recipient=None, alert_config=None):
     """
     return send_email(subject, html_body, recipient)
 
+def send_password_reset_code(recipient_email, code, ttl_minutes=15):
+    subject = "Uptime Tools password reset code"
+    html_body = f"""
+    <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #ddd; background-color: #f8faff; max-width: 480px;">
+        <h2 style="color: #2563eb; margin-top: 0;">Reset your Uptime Tools password</h2>
+        <p>Use the code below to reset your password. It expires in {ttl_minutes} minutes.</p>
+        <p style="font-size: 32px; font-weight: 700; letter-spacing: 6px; text-align: center; padding: 16px; background: #fff; border: 1px dashed #2563eb; border-radius: 8px; color: #1e293b;">{html.escape(str(code))}</p>
+        <p style="color: #64748b; font-size: 13px;">If you didn't request this, you can safely ignore this email — your password won't change unless this code is used.</p>
+    </div>
+    """
+    return send_email(subject, html_body, recipient_email)
+
+
+def send_network_fluctuation_alert(device, interruption_count, window_minutes, recipient=None):
+    """Sends the 'Network Fluctuation Detected' alert when a device racks up
+    many short Minor Interruptions within a rolling window. This pattern
+    usually points to an unstable ISP link, router, switch, Wi-Fi, or
+    cabling issue rather than a single hard outage."""
+    if not recipient and isinstance(device, dict) and "recipient" in device:
+        recipient = device["recipient"]
+    subject = "Network Fluctuation Detected"
+
+    html_body = f"""
+    <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #f0ad4e; background-color: #fffbf0; max-width: 600px;">
+        <h2 style="color: #e67e22; margin-top: 0;">Network Fluctuation Detected</h2>
+        <p>This device has experienced repeated short interruptions in a short period of time, which usually indicates an unstable connection rather than a single outage:</p>
+        {build_table(["Metric", "Value"], [
+            ["Device Name", device.get("name", "-")],
+            ["IP Address", device.get("ip", "-")],
+            ["Number of Interruptions", interruption_count],
+            ["Monitoring Period", f"Last {window_minutes} minutes"],
+        ])}
+        <p style="margin-top: 16px; color: #555;">Recommendation: inspect the ISP connection, router, switch, Wi-Fi access point, or cabling for this device's location.</p>
+    </div>
+    """
+    return send_email(subject, html_body, recipient)
+
+
 def send_fluctuation_report(device, outages, recipient=None, alert_config=None):
     """Sends a fluctuation (repeated short outage) summary report."""
     if not recipient and isinstance(device, dict) and "recipient" in device:
@@ -171,4 +241,4 @@ def send_fluctuation_report(device, outages, recipient=None, alert_config=None):
         )}
     </div>
     """
-    return send_email(subject, html_body, recipient)
+    return send_email(subject, html_body, recipient)

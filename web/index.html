@@ -2,26 +2,25 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NetWatch — Network Uptime Monitoring</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f172a" />
+    <title>Uptime Tools — Network Uptime Monitoring</title>
     <meta name="description" content="Monitor device uptime, incident logs, live network health, and alerts from one clean portal." />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="styles.css" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
       body, button, input, select {
-        font-family: 'Outfit', sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
         letter-spacing: -0.1px;
         -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
       }
       *, *::before, *::after { box-sizing: border-box; }
       .panel, .stat-card, .table-wrap, td, th, input, select { word-break: break-word; overflow-wrap: break-word; }
 
       #statusRows td:nth-child(3),
       #statusRows td:nth-child(5) {
-        font-family: 'Roboto Mono', monospace;
+        font-family: ui-monospace, 'SF Mono', 'Roboto Mono', Menlo, Consolas, monospace;
         font-size: 12px;
         letter-spacing: -0.5px;
       }
@@ -51,112 +50,234 @@
   </head>
   <body>
 
+    <!-- ── GLOBAL LOADING OVERLAY (small centered dialog) ── -->
+    <div id="loadingOverlay" class="loading-overlay hidden">
+      <div class="loading-overlay-inner">
+        <div class="loading-bars" aria-hidden="true">
+          <span class="loading-bar"></span>
+          <span class="loading-bar"></span>
+          <span class="loading-bar"></span>
+          <span class="loading-bar"></span>
+          <span class="loading-bar"></span>
+        </div>
+        <p id="loadingOverlayText" class="loading-overlay-text">Connecting to Uptime Tools…</p>
+      </div>
+    </div>
+
+    <!-- ── TOAST / PROGRESS (upload, download, generic actions) ── -->
+    <div id="toastStack" class="toast-stack" aria-live="polite"></div>
+
     <!-- ── AUTH LANDING PAGE ── -->
-    <main id="authView" class="auth-shell">
+    <main id="authView" class="auth-shell hidden">
+      <div class="auth-card-frame">
 
-      <!-- Left: Auth Panel -->
-      <section class="auth-panel">
-        <div class="brand-mark">NW</div>
-        <p class="eyebrow">Network Uptime Monitoring</p>
-        <h1 style="font-weight:700;">NetWatch</h1>
-        <p class="lead">Monitor groups, device assets, incident logs, live system availability, and alerting configurations from one clean portal.</p>
+        <!-- Left: Brand Panel -->
+        <section class="auth-brand-panel">
+          <div class="brand-mark np-logo">
+            <svg viewBox="0 0 80 80" class="np-logo-svg" aria-hidden="true">
+              <circle cx="40" cy="40" r="37" class="np-logo-ring"></circle>
+              <circle cx="40" cy="40" r="32" class="np-logo-bg"></circle>
+              <g class="np-logo-icon">
+                <rect x="24" y="42" width="7" height="14" rx="2" class="np-logo-bar np-logo-bar-1"></rect>
+                <rect x="36.5" y="32" width="7" height="24" rx="2" class="np-logo-bar np-logo-bar-2"></rect>
+                <rect x="49" y="22" width="7" height="34" rx="2" class="np-logo-bar np-logo-bar-3"></rect>
+                <circle cx="52.5" cy="20" r="4.5" class="np-logo-dot"></circle>
+              </g>
+            </svg>
+          </div>
 
-        <div class="auth-card">
+          <p class="eyebrow">Network Uptime Monitoring</p>
+          <h1 class="auth-brand-title">Uptime Tools</h1>
+          <p class="lead auth-brand-desc">A clean, reliable portal for tracking device availability, ping health, and incidents across every location.</p>
+
+          <ul class="auth-bullet-list">
+            <li>
+              <span class="auth-bullet-icon">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4l2-7 4 14 2-7h8"/></svg>
+              </span>
+              Live Monitoring
+            </li>
+            <li>
+              <span class="auth-bullet-icon">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              </span>
+              Incident Alerts
+            </li>
+            <li>
+              <span class="auth-bullet-icon">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+              </span>
+              Historical Reports
+            </li>
+          </ul>
+        </section>
+
+        <!-- Right: Form Panel -->
+        <section class="auth-form-panel" id="authFormPanel">
+          <div class="auth-sweep-layer" aria-hidden="true"><span class="auth-sweep"></span></div>
+
           <div class="auth-tabs">
+            <span class="auth-tab-sweep" aria-hidden="true"></span>
             <button class="auth-tab active" data-auth-tab="login">Login</button>
             <button class="auth-tab" data-auth-tab="signup">Signup</button>
           </div>
-          <form id="loginForm" class="auth-form">
-            <label>Email<input id="loginEmail" type="email" placeholder="you@example.com" required /></label>
-            <label>Password<input id="loginPassword" type="password" placeholder="••••••••" required /></label>
-            <button type="submit" class="primary-btn" style="margin-top:4px;">Open Dashboard</button>
+
+          <div class="auth-forms-viewport">
+            <form id="loginForm" class="auth-form">
+              <label>User ID or Email<input id="loginIdentifier" type="text" placeholder="you@example.com or user1234" required /></label>
+              <label>Password
+                <span class="password-field">
+                  <input id="loginPassword" type="password" placeholder="••••••••" required />
+                  <button type="button" class="password-toggle-btn" data-toggle-target="loginPassword" aria-label="Show password" aria-pressed="false">
+                    <svg class="icon-eye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>
+                    <svg class="icon-eye-off" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.7 18.7 0 0 1 5.06-5.94M9.9 4.24A10.4 10.4 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                  </button>
+                </span>
+              </label>
+              <button type="submit" class="primary-btn" style="margin-top:4px;">
+                <span class="btn-label">Open Dashboard</span>
+              </button>
+              <p class="auth-link-row"><button type="button" id="showForgotPasswordBtn" class="auth-link-btn">Forgot password?</button></p>
+            </form>
+            <form id="signupForm" class="auth-form hidden">
+              <label>Your Name<input id="signupName" type="text" placeholder="John Doe" required /></label>
+              <label>Email<input id="signupEmail" type="email" placeholder="you@example.com" required /></label>
+              <label>User ID
+                <span class="username-input-row">
+                  <input id="signupUsername" type="text" placeholder="e.g. john4821" pattern="[a-z0-9_.\-]{3,24}" />
+                  <button type="button" id="suggestUsernameBtn" class="ghost-action" title="Generate a user ID">Suggest</button>
+                </span>
+                <span id="usernameHint" class="username-hint">This is your unique ID — use it to log in instead of your email.</span>
+              </label>
+              <label>Password
+                <span class="password-field">
+                  <input id="signupPassword" type="password" placeholder="••••••••" required />
+                  <button type="button" class="password-toggle-btn" data-toggle-target="signupPassword" aria-label="Show password" aria-pressed="false">
+                    <svg class="icon-eye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>
+                    <svg class="icon-eye-off" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.7 18.7 0 0 1 5.06-5.94M9.9 4.24A10.4 10.4 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                  </button>
+                </span>
+              </label>
+              <label>Group Name<input id="signupCompany" type="text" placeholder="Acme Corp" required /></label>
+              <button type="submit" class="primary-btn" style="margin-top:4px;">
+                <span class="btn-label">Create Account</span>
+              </button>
+            </form>
+          </div>
+
+          <!-- Forgot password — step 1: enter email -->
+          <form id="forgotEmailForm" class="auth-form hidden">
+            <label>Email<input id="forgotEmail" type="email" placeholder="you@example.com" required /></label>
+            <button type="submit" class="primary-btn" style="margin-top:4px;">
+              <span class="btn-label">Send Reset Code</span>
+            </button>
+            <p class="auth-link-row"><button type="button" id="backToLoginFromEmailBtn" class="auth-link-btn">Back to login</button></p>
           </form>
-          <form id="signupForm" class="auth-form hidden">
-            <label>Your Name<input id="signupName" type="text" placeholder="John Doe" required /></label>
-            <label>Email<input id="signupEmail" type="email" placeholder="you@example.com" required /></label>
-            <label>Password<input id="signupPassword" type="password" placeholder="••••••••" required /></label>
-            <label>Group Name<input id="signupCompany" type="text" placeholder="Acme Corp" required /></label>
-            <button type="submit" class="primary-btn" style="margin-top:4px;">Create Account</button>
+
+          <!-- Forgot password — step 2: enter code + new password -->
+          <form id="forgotResetForm" class="auth-form hidden">
+            <p class="username-hint" id="forgotResetHint">Enter the 6-digit code sent to your email.</p>
+            <label>Reset Code<input id="forgotCode" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="123456" required /></label>
+            <label>New Password
+              <span class="password-field">
+                <input id="forgotNewPassword" type="password" placeholder="••••••••" minlength="6" required />
+                <button type="button" class="password-toggle-btn" data-toggle-target="forgotNewPassword" aria-label="Show password" aria-pressed="false">
+                  <svg class="icon-eye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>
+                  <svg class="icon-eye-off" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.7 18.7 0 0 1 5.06-5.94M9.9 4.24A10.4 10.4 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                </button>
+              </span>
+            </label>
+            <button type="submit" class="primary-btn" style="margin-top:4px;">
+              <span class="btn-label">Reset Password</span>
+            </button>
+            <p class="auth-link-row"><button type="button" id="backToLoginFromResetBtn" class="auth-link-btn">Back to login</button></p>
           </form>
           <p id="authMessage" class="auth-message"></p>
-        </div>
-      </section>
+        </section>
 
-      <!-- Right: Preview Panel -->
-      <section class="auth-preview">
-
-        <!-- Floating signal card -->
-        <div class="signal-card floating">
-          <span class="pulse-dot"></span>
-          <div>
-            <strong>Live monitoring active</strong>
-            <p>Ping checks every 5 seconds</p>
-          </div>
-        </div>
-
-        <!-- Live stats row -->
-        <div class="auth-preview-stats">
-          <div class="auth-preview-stat good">
-            <span class="stat-label">Online</span>
-            <div class="stat-value" id="authOnline">—</div>
-          </div>
-          <div class="auth-preview-stat danger">
-            <span class="stat-label">Offline</span>
-            <div class="stat-value" id="authOffline">—</div>
-          </div>
-          <div class="auth-preview-stat blue">
-            <span class="stat-label">Uptime</span>
-            <div class="stat-value" id="authUptime">—</div>
-          </div>
-          <div class="auth-preview-stat warn">
-            <span class="stat-label">Incidents</span>
-            <div class="stat-value" id="authIncidents">—</div>
-          </div>
-        </div>
-
-        <!-- Bar chart window -->
-        <div class="preview-window">
-          <div class="preview-topbar">
-            <span></span><span></span><span></span>
-          </div>
-          <div class="preview-bar-chart" id="authBars">
-            <!-- bars injected by JS -->
-          </div>
-        </div>
-
-      </section>
+      </div>
     </main>
 
     <!-- ── APP SHELL ── -->
     <main id="appView" class="app-shell hidden">
+      <button id="mobileNavToggle" class="mobile-nav-toggle" aria-label="Open menu" aria-expanded="false">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
+      </button>
+      <div id="mobileNavScrim" class="mobile-nav-scrim"></div>
       <aside class="sidebar">
         <div class="sidebar-brand">
-          <div class="brand-mark small">NW</div>
+          <div class="brand-mark small np-logo" id="sidebarLogo">
+            <svg viewBox="0 0 80 80" class="np-logo-svg" aria-hidden="true">
+              <circle cx="40" cy="40" r="37" class="np-logo-ring"></circle>
+              <circle cx="40" cy="40" r="32" class="np-logo-bg"></circle>
+              <g class="np-logo-icon">
+                <rect x="24" y="42" width="7" height="14" rx="2" class="np-logo-bar np-logo-bar-1"></rect>
+                <rect x="36.5" y="32" width="7" height="24" rx="2" class="np-logo-bar np-logo-bar-2"></rect>
+                <rect x="49" y="22" width="7" height="34" rx="2" class="np-logo-bar np-logo-bar-3"></rect>
+                <circle cx="52.5" cy="20" r="4.5" class="np-logo-dot"></circle>
+              </g>
+            </svg>
+          </div>
           <div>
-            <strong>NetWatch</strong>
+            <strong>Uptime Tools</strong>
             <span id="userLabel">Portal</span>
           </div>
         </div>
         <nav class="nav-list">
-          <button class="nav-item active" data-page="dashboard">Dashboard</button>
-          <button class="nav-item" data-page="devices">Devices</button>
-          <button class="nav-item" data-page="reports">Incident Log</button>
-          <button class="nav-item" data-page="notifications">Alerting</button>
-          <button class="nav-item" data-page="companies">Groups</button>
+          <button class="nav-item active" data-page="dashboard">
+            <svg class="nav-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+            <span class="nav-label">Dashboard</span>
+          </button>
+          <button class="nav-item" data-page="devices">
+            <svg class="nav-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="6" rx="1.5"/><rect x="2" y="14" width="20" height="6" rx="1.5"/><line x1="6" y1="7" x2="6.01" y2="7"/><line x1="6" y1="17" x2="6.01" y2="17"/></svg>
+            <span class="nav-label">Devices</span>
+          </button>
+          <button class="nav-item" data-page="reports">
+            <svg class="nav-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span class="nav-label">Incident Log</span>
+          </button>
+          <button class="nav-item" data-page="profile">
+            <svg class="nav-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <span class="nav-label">Profile</span>
+          </button>
+          <button class="nav-item" data-page="companies">
+            <svg class="nav-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <span class="nav-label">Groups</span>
+          </button>
         </nav>
-        <button id="logoutBtn" class="ghost-btn">Logout</button>
+        <button id="logoutBtn" class="ghost-btn">
+          <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          <span class="nav-label">Logout</span>
+        </button>
       </aside>
 
       <section class="content">
         <header class="topbar">
-          <div>
-            <p class="eyebrow">System panel</p>
-            <h2 id="pageTitle" style="font-weight:500;margin:0;font-size:22px;">Dashboard</h2>
+          <div class="page-title-row">
+            <span class="page-title-icon np-logo" aria-hidden="true">
+              <svg viewBox="0 0 80 80" class="np-logo-svg">
+                <circle cx="40" cy="40" r="37" class="np-logo-ring"></circle>
+                <circle cx="40" cy="40" r="32" class="np-logo-bg"></circle>
+                <g class="np-logo-icon">
+                  <rect x="24" y="42" width="7" height="14" rx="2" class="np-logo-bar np-logo-bar-1"></rect>
+                  <rect x="36.5" y="32" width="7" height="24" rx="2" class="np-logo-bar np-logo-bar-2"></rect>
+                  <rect x="49" y="22" width="7" height="34" rx="2" class="np-logo-bar np-logo-bar-3"></rect>
+                  <circle cx="52.5" cy="20" r="4.5" class="np-logo-dot"></circle>
+                </g>
+              </svg>
+            </span>
+            <div>
+              <p class="eyebrow">System panel</p>
+              <h2 id="pageTitle" style="font-weight:500;margin:0;font-size:22px;">Dashboard</h2>
+            </div>
           </div>
           <div class="topbar-actions">
             <label class="company-switcher">Group<select id="companySelect"></select></label>
             <span id="lastUpdated" class="status-pill">Synced now</span>
             <button id="refreshBtn" class="secondary-btn">Sync Feed</button>
+            <button id="topbarProfileBtn" class="topbar-avatar-btn" title="Profile" aria-label="Go to profile">
+              <span id="topbarAvatarInitial">?</span>
+            </button>
           </div>
         </header>
 
@@ -197,7 +318,7 @@
                   <span style="font-size:10px;color:#888;">Last 2 hours · 10 min buckets</span>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;">
-                  <strong id="currentHealth" style="font-family:'Roboto Mono',monospace;font-weight:600;font-size:18px;color:var(--primary);">0%</strong>
+                  <strong id="currentHealth" style="font-family:'Roboto Mono',monospace;font-weight:700;font-size:30px;color:var(--primary);line-height:1;">0%</strong>
                   <button id="expandDashboardBtn" class="expand-btn" title="Expand fullscreen" style="padding:5px;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;min-height:30px;border-radius:6px;">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
                   </button>
@@ -235,7 +356,7 @@
             </form>
             <div id="csvImportPanel" class="import-panel hidden">
               <p>CSV columns: <strong>Location,Name,IP</strong> or <strong>Location,Device Name,IP Address</strong>.</p>
-              <input id="csvFileInput" type="file" accept=".csv" />
+              <input id="csvFileInput" type="file" accept=".csv,text/csv,text/plain,text/comma-separated-values,application/vnd.ms-excel,application/csv" />
               <button id="importCsvBtn" class="primary-btn">Import Devices</button>
             </div>
             <div id="deviceCards" class="device-grid"></div>
@@ -246,9 +367,30 @@
         <section id="reports" class="page">
           <div class="panel">
             <div class="panel-header">
-              <h3 style="font-weight:500;">Incident Reports</h3>
-              <button id="downloadReportBtn" class="secondary-btn">Export Summary</button>
+              <h3 style="font-weight:500;">Incident Log</h3>
+              <button id="downloadReportBtn" class="secondary-btn">Export Log</button>
             </div>
+
+            <!-- Major / Minor tab switcher -->
+            <div class="incident-tabs">
+              <button class="incident-tab active" data-tab="major">
+                Major Incidents
+                <span class="tab-badge" id="majorTabBadge">0</span>
+              </button>
+              <button class="incident-tab" data-tab="minor">
+                Minor Incidents
+                <span class="tab-badge minor" id="minorTabBadge">0</span>
+              </button>
+              <span class="tab-hint" id="tabHint">Verified outages — shown in reports &amp; exports</span>
+            </div>
+
+            <!-- Bulk-reclassify action bar (shown only when rows are selected) -->
+            <div class="bulk-action-bar hidden" id="bulkActionBar">
+              <span class="bulk-count" id="bulkCount">0 selected</span>
+              <button class="secondary-btn" id="bulkMoveBtn">Move to <span id="bulkMoveTarget">Minor</span></button>
+              <button class="ghost-btn" id="bulkCancelBtn">Cancel</button>
+            </div>
+
             <div class="incident-filter-bar">
               <div class="device-dropdown-wrap">
                 <button id="deviceFilterToggle" class="device-dropdown-toggle" aria-haspopup="listbox" aria-expanded="false">
@@ -257,33 +399,123 @@
                 </button>
                 <div id="deviceDropdownList" class="device-dropdown-list" role="listbox"></div>
               </div>
+              <div class="incident-date-filter">
+                <label class="incident-date-label">
+                  <span>From</span>
+                  <input type="date" id="incidentStartDate" />
+                </label>
+                <label class="incident-date-label">
+                  <span>To</span>
+                  <input type="date" id="incidentEndDate" />
+                </label>
+                <button id="incidentDateClearBtn" class="secondary-btn" type="button">Clear</button>
+              </div>
               <span id="incidentResultCount" class="incident-result-count"></span>
             </div>
+
             <div class="table-wrap">
-              <table>
-                <thead><tr><th>Date</th><th>Location</th><th>Resource Name</th><th>Target Host</th><th>Downtime Trigger</th><th>Recovery Time</th><th>Total Duration</th></tr></thead>
+              <table id="incidentTable">
+                <thead>
+                  <tr>
+                    <th style="width:32px;"><input type="checkbox" id="selectAllIncidents" title="Select all"></th>
+                    <th>Date</th><th>Location</th><th>Resource Name</th><th>Target Host</th>
+                    <th>Downtime Trigger</th><th>Recovery Time</th><th>Total Duration</th>
+                    <th id="causeColHeader" class="hidden">Reason</th>
+                  </tr>
+                </thead>
                 <tbody id="reportRows"></tbody>
               </table>
             </div>
           </div>
         </section>
 
-        <!-- ── ALERTING PAGE ── -->
-        <section id="notifications" class="page">
-          <div class="panel settings-panel">
-            <h3 style="font-weight:500;">Alerting Profile</h3>
-            <label>Primary Alert Email
-              <input id="companyEmail" type="email" placeholder="yourname@gmail.com" />
-            </label>
-            <label>Additional Alert Recipients
-              <input id="companyReceivers" type="text" placeholder="noc@company.com, admin@company.com" />
-            </label>
-            <label>Outage Alert Threshold (Seconds)
-              <input id="alertSeconds" type="number" min="5" />
-            </label>
-            <p class="helper-text">Alerts are sent when a device goes offline longer than the threshold. Separate multiple recipients with commas.</p>
-            <button id="saveNotificationBtn" class="primary-btn" style="width:fit-content;">Save Alert Profile</button>
+        <!-- ── PROFILE PAGE ── -->
+        <section id="profile" class="page">
+          <div class="profile-card">
+            <div class="profile-avatar" id="profileAvatar">
+              <svg viewBox="0 0 80 80" class="np-logo-svg" aria-hidden="true">
+                <circle cx="40" cy="40" r="37" class="np-logo-ring"></circle>
+                <circle cx="40" cy="40" r="32" class="np-logo-bg"></circle>
+                <g class="np-logo-icon">
+                  <rect x="24" y="42" width="7" height="14" rx="2" class="np-logo-bar np-logo-bar-1"></rect>
+                  <rect x="36.5" y="32" width="7" height="24" rx="2" class="np-logo-bar np-logo-bar-2"></rect>
+                  <rect x="49" y="22" width="7" height="34" rx="2" class="np-logo-bar np-logo-bar-3"></rect>
+                  <circle cx="52.5" cy="20" r="4.5" class="np-logo-dot"></circle>
+                </g>
+              </svg>
+            </div>
+            <div class="profile-info">
+              <div class="profile-field">
+                <span class="profile-field-label">Name</span>
+                <span class="profile-field-value" id="profileName">—</span>
+              </div>
+              <div class="profile-field">
+                <span class="profile-field-label">Email</span>
+                <span class="profile-field-value" id="profileEmail">—</span>
+              </div>
+              <div class="profile-field">
+                <span class="profile-field-label">User ID</span>
+                <span class="profile-field-value" id="profileUsername">—</span>
+              </div>
+            </div>
           </div>
+
+          <div class="alert-cards-grid">
+            <div class="panel alert-card">
+              <div class="alert-card-header">
+                <span class="alert-card-icon email-icon" aria-hidden="true">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M22 6l-10 7L2 6"/></svg>
+                </span>
+                <div>
+                  <h3 style="font-weight:500;margin:0;">Email Alerts</h3>
+                  <span class="alert-card-sub">Sent when a device outage crosses your threshold</span>
+                </div>
+              </div>
+              <label>Alert Mail
+                <input id="companyEmail" type="email" placeholder="yourname@gmail.com" />
+              </label>
+              <label>Additional Recipients
+                <input id="companyReceivers" type="text" placeholder="noc@company.com, admin@company.com" />
+              </label>
+              <label>Outage Alert Threshold (Seconds)
+                <input id="alertSeconds" type="number" min="5" />
+              </label>
+              <p class="helper-text">Alerts are sent when a device goes offline longer than the threshold. Separate multiple recipients with commas.</p>
+            </div>
+
+            <div class="panel alert-card">
+              <div class="alert-card-header">
+                <span class="alert-card-icon online-icon" aria-hidden="true">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14 0"/><path d="M8.5 16a6 6 0 0 1 7 0"/><line x1="12" y1="20" x2="12" y2="20"/><path d="M2 8.82a16 16 0 0 1 20 0"/></svg>
+                </span>
+                <div>
+                  <h3 style="font-weight:500;margin:0;">Online Alerts</h3>
+                  <span class="alert-card-sub">Instant in-browser alert the moment a device changes state</span>
+                </div>
+              </div>
+              <label class="toggle-row">
+                <span>Enable online alerts</span>
+                <span class="toggle-switch">
+                  <input id="onlineAlertsToggle" type="checkbox" checked />
+                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                </span>
+              </label>
+              <p class="helper-text">Shows a live browser notification and in-app toast when a device goes offline or recovers, while Uptime Tools is open.</p>
+              <div id="onlineAlertStatus" class="helper-text online-alert-status"></div>
+
+              <div class="alert-history-section">
+                <div class="alert-history-head">
+                  <h4>Notification History</h4>
+                  <span class="alert-history-sub">Last 24 hours</span>
+                </div>
+                <div id="alertHistoryList" class="alert-history-list">
+                  <p class="alert-history-empty">No notifications yet — you'll see device status changes here.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <button id="saveNotificationBtn" class="primary-btn" style="width:fit-content;">Save Alert Preferences</button>
         </section>
 
         <!-- ── GROUPS PAGE ── -->
@@ -347,9 +579,9 @@
             <!-- Timeframe row + download -->
             <div class="overlay-tf-row">
               <button class="overlay-tf-btn active" data-ov-tf="today">Today</button>
-              <button class="overlay-tf-btn" data-ov-tf="week">Last 7 Days</button>
-              <button class="overlay-tf-btn" data-ov-tf="month">Last 30 Days</button>
-              <button class="overlay-tf-btn" data-ov-tf="6months">Last 6 Months</button>
+              <button class="overlay-tf-btn" data-ov-tf="week">Last Week</button>
+              <button class="overlay-tf-btn" data-ov-tf="month">Last Month</button>
+              <button class="overlay-tf-btn" data-ov-tf="6months">6 Months</button>
               <button class="overlay-tf-btn" data-ov-tf="custom">Custom Range</button>
               <button class="overlay-download-btn" id="overlayDownloadChartBtn">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -403,7 +635,7 @@
             </div>
             <div class="overlay-stat-card blue">
               <div class="osc-label">Period</div>
-              <div class="osc-value" id="overlayPeriodLabel" style="font-size:14px;font-family:'Outfit',sans-serif;font-weight:600;">Today</div>
+              <div class="osc-value" id="overlayPeriodLabel" style="font-size:14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-weight:600;">Today</div>
             </div>
 
             <!-- Device info -->
@@ -424,5 +656,26 @@
     </div>
 
     <script src="app.js"></script>
+    <!-- UI-only helper: keeps the login/signup sliding container's height in
+         sync with whichever form is visible, so the swap animation resizes
+         smoothly instead of clipping. Purely cosmetic — does not touch auth,
+         validation, or any logic in app.js. -->
+    <script>
+      (function () {
+        var viewport = document.querySelector(".auth-forms-viewport");
+        var login = document.querySelector("#loginForm");
+        var signup = document.querySelector("#signupForm");
+        if (!viewport || !login || !signup) return;
+        function syncAuthFormHeight() {
+          var active = login.classList.contains("hidden") ? signup : login;
+          viewport.style.height = active.scrollHeight + "px";
+        }
+        syncAuthFormHeight();
+        document.querySelectorAll(".auth-tab").forEach(function (t) {
+          t.addEventListener("click", function () { setTimeout(syncAuthFormHeight, 0); });
+        });
+        window.addEventListener("resize", syncAuthFormHeight);
+      })();
+    </script>
   </body>
 </html>
