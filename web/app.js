@@ -54,6 +54,10 @@ function showBarTooltip(element, bar) {
 document.addEventListener("click", (e) => {
   if (!e.target.closest(".health-bar-wrap") && !e.target.closest(".ombar-wrap")) {
     barTooltip.classList.add("hidden");
+    if (selectedHealthBarIndex !== null) {
+      selectedHealthBarIndex = null;
+      renderHealthBars();
+    }
   }
 });
 
@@ -65,8 +69,18 @@ let devices = [];
 let statusDevices = [];
 let reports = [];
 let minorIncidents = [];
-let deviceHistories = {}; // deviceId -> array of { time, value, attempts, successes }
+// deviceId -> { labels, uptime, successes, attempts, currentIndex } for the
+// last 6 real, hour-aligned buckets. This comes straight from the server's
+// ping_logs history (see /api/devices/:id/hourly6), NOT from anything
+// accumulated in the browser -- so it survives page reloads/browser closures
+// and correctly leaves a bucket empty if monitoring wasn't happening during
+// that hour (e.g. pinged for 2 hours, took a break, came back).
+let deviceHistories = {};
 let selectedDeviceId = null;
+// Which of the 6 bars the user has clicked on (index 0-5), or null if none.
+// The big "current health" number only shows a value once a bar is selected --
+// it never defaults to showing 100% (or any percentage) on its own.
+let selectedHealthBarIndex = null;
 let activeReportIp = "all";
 let reportStartDate = "";
 let reportEndDate = "";
@@ -283,7 +297,7 @@ async function loadAll() {
       selectedDeviceId = statusDevices[0].id;
     }
 
-    updateUptimeHistory();
+    if (selectedDeviceId) await loadHourlyHistory(selectedDeviceId);
     renderAll();
 
     // Sync overlay if open
@@ -297,27 +311,19 @@ async function loadAll() {
   }
 }
 
-// ── Uptime History (10-minute buckets, keep last 12 = 2 hours) ────────────
-function updateUptimeHistory() {
-  statusDevices.forEach((device) => {
-    const isOnline = device.confirmedStatus === "ONLINE" || device.status === "ONLINE";
-    if (!deviceHistories[device.id]) deviceHistories[device.id] = [];
-
-    const now = new Date();
-    const roundedMin = Math.floor(now.getMinutes() / 10) * 10;
-    const nowLabel = `${now.getHours().toString().padStart(2, "0")}:${roundedMin.toString().padStart(2, "0")}`;
-    const history = deviceHistories[device.id];
-    const last = history[history.length - 1];
-
-    if (last && last.time === nowLabel) {
-      last.attempts++;
-      if (isOnline) last.successes++;
-      last.value = Math.round((last.successes / last.attempts) * 100);
-    } else {
-      history.push({ time: nowLabel, value: isOnline ? 100 : 0, attempts: 1, successes: isOnline ? 1 : 0 });
-      if (history.length > 12) history.shift(); // keep last 12 bars (2 hours)
-    }
-  });
+// ── Uptime History (real last-6-hours, hourly buckets, from the server) ────
+// Pulls the actual ping_logs-backed history for one device from
+// /api/devices/:id/hourly6. Each of the 6 buckets covers one real clock hour;
+// a bucket with no pings recorded (e.g. monitoring wasn't running that hour)
+// comes back as `null` and is rendered as an empty bar rather than 0% or 100%.
+async function loadHourlyHistory(deviceId) {
+  if (!deviceId) return;
+  try {
+    const data = await api(`/api/devices/${deviceId}/hourly6`);
+    deviceHistories[deviceId] = data;
+  } catch (err) {
+    console.error("Error loading hourly history:", err);
+  }
 }
 
 // ── App Show/Hide ─────────────────────────────────────────────────────────────
@@ -480,47 +486,65 @@ statusRows.addEventListener("click", (e) => {
   const row = e.target.closest("[data-main-row]");
   if (!row) return;
   selectedDeviceId = row.dataset.rowDeviceId;
+  selectedHealthBarIndex = null; // new device selected -- clear any bar selection
   renderDashboard();
+  loadHourlyHistory(selectedDeviceId).then(renderHealthBars);
 });
 
-// ── MAIN HEALTH BARS (6 bars) ─────────────────────────────────────────────────
+// ── MAIN HEALTH BARS (6 bars = last 6 real hours) ─────────────────────────────
 function renderHealthBars() {
   const targetDevice = statusDevices.find((d) => d.id === selectedDeviceId);
-  const history = selectedDeviceId ? (deviceHistories[selectedDeviceId] || []) : [];
-  const currentPct = history.length ? history[history.length - 1].value : 0;
+  const data = selectedDeviceId ? deviceHistories[selectedDeviceId] : null;
 
   const widgetTitle = document.querySelector("#chartDeviceTitle");
   if (widgetTitle) widgetTitle.textContent = targetDevice ? targetDevice.name : "Uptime History";
 
+  const TOTAL_BARS = 6;
+  const displayBars = Array.from({ length: TOTAL_BARS }, (_, i) => {
+    const value = data ? data.uptime[i] : null;
+    const empty = value === null || value === undefined;
+    return {
+      time: data ? data.labels[i] : "--",
+      value: empty ? null : value,
+      empty,
+      successes: data ? data.successes[i] : 0,
+      attempts: data ? data.attempts[i] : 0,
+    };
+  });
+  const currentIndex = data ? data.currentIndex : TOTAL_BARS - 1;
+
+  // The hero "current health" number is intentionally blank until the user
+  // clicks one of the 6 bars -- it never shows 100% (or anything else) by
+  // default.
   const heroNum = document.querySelector("#currentHealth");
   if (heroNum) {
-    if (pendingStatBoom) {
-      animateCountUp(heroNum, currentPct, { suffix: "%", duration: 1100 });
+    const selectedBar = selectedHealthBarIndex !== null ? displayBars[selectedHealthBarIndex] : null;
+    if (selectedBar && !selectedBar.empty) {
+      if (pendingStatBoom) {
+        animateCountUp(heroNum, selectedBar.value, { suffix: "%", duration: 1100 });
+      } else {
+        heroNum.textContent = `${selectedBar.value}%`;
+      }
+      heroNum.style.color = healthColorSelector(selectedBar.value);
     } else {
-      heroNum.textContent = `${currentPct}%`;
+      heroNum.textContent = "—";
+      heroNum.style.color = "var(--muted)";
     }
-    heroNum.style.color = healthColorSelector(currentPct);
   }
   pendingStatBoom = false;
 
   const container = document.querySelector("#healthBars");
   if (!container) return;
 
-  const TOTAL_BARS = 12;
-  const emptyBar = { time: "--:--", value: null, empty: true };
-  const padded = Array(Math.max(0, TOTAL_BARS - history.length)).fill(null).map(() => ({ ...emptyBar }));
-  const displayBars = [...padded, ...history];
-
   // Rebuild DOM if count doesn't match
   if (container.children.length !== TOTAL_BARS) {
     container.innerHTML = displayBars.map((bar, i) => {
-      const isLive = i === TOTAL_BARS - 1;
       return `
         <div class="health-bar-wrap" data-index="${i}">
           <div class="health-bar-track">
-            <div class="health-bar${isLive ? " health-bar-live" : ""}" style="height:0%;background-color:#e2e8f0;"></div>
+            <div class="health-bar" style="height:0%;background-color:#e2e8f0;"></div>
           </div>
-          <span class="health-label">--:--</span>
+          <span class="health-label">--</span>
         </div>`;
     }).join("");
   }
@@ -529,13 +553,21 @@ function renderHealthBars() {
     displayBars.forEach((bar, i) => {
       const wrap = container.children[i];
       if (!wrap) return;
-      const isLive = i === TOTAL_BARS - 1 && !bar.empty;
+      const isCurrentHour = i === currentIndex && !bar.empty;
+      const isSelected = selectedHealthBarIndex === i && !bar.empty;
 
       if (!bar.empty) {
-        wrap.onclick = (e) => { e.stopPropagation(); showBarTooltip(wrap, bar); };
+        wrap.onclick = (e) => {
+          e.stopPropagation();
+          selectedHealthBarIndex = i;
+          showBarTooltip(wrap, bar);
+          renderHealthBars();
+        };
       } else {
         wrap.onclick = null;
       }
+
+      wrap.classList.toggle("health-bar-selected", isSelected);
 
       const barEl = wrap.querySelector(".health-bar");
       const labelEl = wrap.querySelector(".health-label");
@@ -551,7 +583,7 @@ function renderHealthBars() {
           barEl.style.height = `${Math.max(bar.value, 6)}%`;
           barEl.style.backgroundColor = healthColorSelector(bar.value);
           barEl.style.opacity = "1";
-          if (isLive) {
+          if (isCurrentHour) {
             barEl.style.boxShadow = `0 0 10px 2px ${healthColorSelector(bar.value)}55`;
             if (!barEl.classList.contains("health-bar-live")) barEl.classList.add("health-bar-live");
           } else {
@@ -561,8 +593,8 @@ function renderHealthBars() {
         }
       }
       if (labelEl) {
-        labelEl.textContent = bar.empty ? "--:--" : bar.time;
-        labelEl.style.color = bar.empty ? "#ccc" : (isLive ? healthColorSelector(bar.value) : "#888");
+        labelEl.textContent = bar.empty ? "--" : bar.time;
+        labelEl.style.color = bar.empty ? "#ccc" : (isCurrentHour ? healthColorSelector(bar.value) : "#888");
       }
     });
   });
@@ -623,7 +655,7 @@ function bindDeviceActions() {
     if (!confirm(`Remove ${device.name} (${device.ip})?`)) return;
     await api(`/api/companies/${activeCompanyId}/devices/${device.id}`, { method: "DELETE" });
     editingDeviceId = null;
-    if (selectedDeviceId === device.id) selectedDeviceId = null;
+    if (selectedDeviceId === device.id) { selectedDeviceId = null; selectedHealthBarIndex = null; }
     await loadAll();
   }));
   document.querySelectorAll(".edit-device-form").forEach((form) => form.addEventListener("submit", async (e) => {
@@ -924,7 +956,7 @@ function renderCompanies() {
 }
 
 function bindCompanyActions() {
-  document.querySelectorAll("[data-open-company]").forEach((btn) => btn.addEventListener("click", async () => { activeCompanyId = btn.dataset.openCompany; activeReportIp = "all"; selectedDeviceId = null; await loadAll(); }));
+  document.querySelectorAll("[data-open-company]").forEach((btn) => btn.addEventListener("click", async () => { activeCompanyId = btn.dataset.openCompany; activeReportIp = "all"; selectedDeviceId = null; selectedHealthBarIndex = null; await loadAll(); }));
   document.querySelectorAll("[data-edit-company]").forEach((btn) => btn.addEventListener("click", () => { editingCompanyId = btn.dataset.editCompany; renderCompanies(); }));
   document.querySelectorAll("[data-cancel-company]").forEach((btn) => btn.addEventListener("click", () => { editingCompanyId = null; renderCompanies(); }));
   document.querySelectorAll("[data-remove-company]").forEach((btn) => btn.addEventListener("click", async () => {
@@ -933,6 +965,7 @@ function bindCompanyActions() {
     await api(`/api/companies/${company.id}`, { method: "DELETE" });
     if (activeCompanyId === company.id) activeCompanyId = null;
     selectedDeviceId = null;
+    selectedHealthBarIndex = null;
     await loadAll();
   }));
   document.querySelectorAll(".edit-company-form").forEach((form) => form.addEventListener("submit", async (e) => {
@@ -1189,6 +1222,7 @@ function renderOverlayDeviceList() {
   document.querySelectorAll("[data-ov-device]").forEach((item) => {
     item.addEventListener("click", () => {
       selectedDeviceId = item.dataset.ovDevice;
+      selectedHealthBarIndex = null;
       // Update active state
       document.querySelectorAll("[data-ov-device]").forEach((el) => el.classList.remove("active"));
       item.classList.add("active");
@@ -1215,36 +1249,56 @@ function buildFsStatusRowsHTML() {
     : `<tr><td colspan="6" style="padding:12px;color:#475569;text-align:center;">No devices.</td></tr>`;
 }
 
-// Render the mini bars in the right stats panel (6 bars)
+// Render the mini bars in the right stats panel (6 bars = last 6 real hours)
 function renderOverlayMiniBars() {
   const container = document.querySelector("#overlayMiniBars");
   const labelEl = document.querySelector("#overlayMiniBarHealth");
   if (!container) return;
 
-  const history = selectedDeviceId ? (deviceHistories[selectedDeviceId] || []) : [];
+  const data = selectedDeviceId ? deviceHistories[selectedDeviceId] : null;
   const TOTAL = 6;
-  const emptyBar = { time: "--:--", value: null, empty: true };
-  const padded = Array(Math.max(0, TOTAL - history.length)).fill(null).map(() => ({ ...emptyBar }));
-  const displayBars = [...padded, ...history];
+  const displayBars = Array.from({ length: TOTAL }, (_, i) => {
+    const value = data ? data.uptime[i] : null;
+    const empty = value === null || value === undefined;
+    return { time: data ? data.labels[i] : "--", value: empty ? null : value, empty };
+  });
+  const currentIndex = data ? data.currentIndex : TOTAL - 1;
 
-  const currentPct = history.length ? history[history.length - 1].value : null;
+  // Same rule as the main dashboard: no default 100%/live percentage --
+  // only show a value once the matching bar has been clicked.
+  const selectedBar = selectedHealthBarIndex !== null ? displayBars[selectedHealthBarIndex] : null;
   if (labelEl) {
-    labelEl.textContent = currentPct !== null ? `${currentPct}%` : "—%";
-    labelEl.style.color = currentPct !== null ? healthColorSelector(currentPct) : "#475569";
+    if (selectedBar && !selectedBar.empty) {
+      labelEl.textContent = `${selectedBar.value}%`;
+      labelEl.style.color = healthColorSelector(selectedBar.value);
+    } else {
+      labelEl.textContent = "—";
+      labelEl.style.color = "#475569";
+    }
   }
 
   container.innerHTML = displayBars.map((bar, i) => {
     const h = bar.empty ? 0 : Math.max(bar.value, 4);
     const clr = bar.empty ? "rgba(255,255,255,0.06)" : healthColorSelector(bar.value);
-    const isLive = i === TOTAL - 1 && !bar.empty;
+    const isLive = i === currentIndex && !bar.empty;
     return `
-      <div class="ombar-wrap" title="${bar.empty ? "No data" : `${bar.time} — ${bar.value}%`}">
+      <div class="ombar-wrap" data-index="${i}" title="${bar.empty ? "No data" : `${bar.time} — ${bar.value}%`}">
         <div class="ombar-track">
           <div class="ombar${isLive ? " health-bar-live" : ""}" style="height:${h}%;background:${clr};border-radius:2px;transition:height 0.6s cubic-bezier(0.16,1,0.3,1);"></div>
         </div>
-        <span class="ombar-time">${bar.empty ? "--" : bar.time.slice(0, 5)}</span>
+        <span class="ombar-time">${bar.empty ? "--" : bar.time}</span>
       </div>`;
   }).join("");
+
+  container.querySelectorAll(".ombar-wrap").forEach((wrap) => {
+    const i = Number(wrap.dataset.index);
+    if (displayBars[i].empty) return;
+    wrap.onclick = (e) => {
+      e.stopPropagation();
+      selectedHealthBarIndex = i;
+      renderOverlayMiniBars();
+    };
+  });
 }
 
 // Render the right-panel stat cards
@@ -1990,7 +2044,7 @@ if (mobileNavScrim) mobileNavScrim.addEventListener("click", closeMobileNav);
 // ══════════════════════════════════════════════════════════════════════════════
 //  MISC EVENT BINDINGS
 // ══════════════════════════════════════════════════════════════════════════════
-if (companySelect) companySelect.addEventListener("change", async () => { activeCompanyId = companySelect.value; activeReportIp = "all"; selectedDeviceId = null; notificationDirty = false; await loadAll(); });
+if (companySelect) companySelect.addEventListener("change", async () => { activeCompanyId = companySelect.value; activeReportIp = "all"; selectedDeviceId = null; selectedHealthBarIndex = null; notificationDirty = false; await loadAll(); });
 if (window.refreshBtn) refreshBtn.addEventListener("click", loadAll);
 if (window.logoutBtn) logoutBtn.addEventListener("click", async () => { await api("/api/logout", { method: "POST" }); showAuth(); });
 
@@ -2059,6 +2113,7 @@ if (window.addCompanyForm) addCompanyForm.addEventListener("submit", async (e) =
   const data = await api("/api/companies", { method: "POST", body: JSON.stringify({ name: newCompanyName.value, email: newCompanyEmail.value, plan: "Starter" }) });
   activeCompanyId = data.company.id;
   selectedDeviceId = null;
+  selectedHealthBarIndex = null;
   addCompanyForm.reset();
   addCompanyForm.classList.add("hidden");
   await loadAll();

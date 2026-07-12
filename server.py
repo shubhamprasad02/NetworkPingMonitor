@@ -630,6 +630,18 @@ def parse_timeframe(timeframe, start_str, end_str):
     return start_dt, end_dt
 
 
+def format_hour_label(dt):
+    """Format a datetime's hour as a short 12-hour label, e.g. '2 PM', '12 AM'."""
+    h = dt.hour
+    if h == 0:
+        return "12 AM"
+    if h < 12:
+        return f"{h} AM"
+    if h == 12:
+        return "12 PM"
+    return f"{h - 12} PM"
+
+
 def clean_sheet_title(name, location):
     title = f"{name} ({location})"
     title = re.sub(r"[\\/\?\*:\[\]]", "", title)
@@ -1016,6 +1028,65 @@ class Handler(BaseHTTPRequestHandler):
                 "uptime": aggregation["uptime"],
                 "latency": aggregation["latency"],
                 "todayHourly": today_hourly
+            })
+            return
+
+        # ROLLING LAST-6-HOURS ENDPOINT (main dashboard "Uptime History" widget)
+        # Returns 6 real, hour-aligned buckets (oldest -> newest, ending with the
+        # current in-progress hour) built from the actual ping_logs history, so
+        # the widget survives page reloads/browser closures and correctly shows
+        # gaps (e.g. monitoring stopped for a while and resumed) instead of
+        # inventing data.
+        match = re.fullmatch(r"/api/devices/([^/]+)/hourly6", path)
+        if match:
+            user = self.require_user()
+            if not user:
+                return
+            device_id = unquote(match.group(1))
+            device = database.get_device_for_user(device_id, user["id"])
+            if not device:
+                self.send_json({"error": "Device not found"}, 404)
+                return
+
+            now = datetime.now()
+            current_hour_start = now.replace(minute=0, second=0, microsecond=0)
+            bucket_starts = [current_hour_start - timedelta(hours=(5 - i)) for i in range(6)]
+
+            start_iso = bucket_starts[0].isoformat(timespec="seconds")
+            end_iso = now.isoformat(timespec="seconds")
+            rows = database.get_device_ping_logs(device_id, user["id"], start_iso, end_iso)
+
+            buckets = [{"total": 0, "online": 0} for _ in range(6)]
+            for r in rows:
+                try:
+                    ts = datetime.fromisoformat(r["timestamp"])
+                except Exception:
+                    continue
+                idx = int((ts - bucket_starts[0]).total_seconds() // 3600)
+                if idx < 0 or idx > 5:
+                    continue
+                buckets[idx]["total"] += 1
+                if r["status"] == "ONLINE":
+                    buckets[idx]["online"] += 1
+
+            labels = [format_hour_label(dt) for dt in bucket_starts]
+            uptime = []
+            successes = []
+            attempts = []
+            for b in buckets:
+                if b["total"] > 0:
+                    uptime.append(round((b["online"] / b["total"]) * 100))
+                else:
+                    uptime.append(None)  # no data for this hour -- leave empty, never 0 or 100
+                successes.append(b["online"])
+                attempts.append(b["total"])
+
+            self.send_json({
+                "labels": labels,
+                "uptime": uptime,
+                "successes": successes,
+                "attempts": attempts,
+                "currentIndex": 5,  # last bucket = current, still-in-progress hour
             })
             return
 

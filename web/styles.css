@@ -636,6 +636,7 @@ td { color: var(--text); }
   transition: box-shadow 0.2s ease;
 }
 .health-bar-wrap:hover .health-bar-track { box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+.health-bar-selected .health-bar-track { box-shadow: 0 0 0 2px var(--primary), 0 2px 8px rgba(0,0,0,0.12); }
 .health-bar {
   width: 100%;
   border-radius: 3px 3px 0 0;
@@ -644,12 +645,17 @@ td { color: var(--text); }
 .health-bar-live { animation: livePulse 2s ease-in-out infinite; }
 @keyframes livePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.8; } }
 .health-label {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
   color: var(--muted);
   font-size: 9px;
   margin-top: 4px;
   text-align: center;
   font-family: ui-monospace, 'SF Mono', 'Roboto Mono', Menlo, Consolas, monospace;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
 }
 .chart-legend {
   border-top: 1px solid var(--line);
@@ -1409,6 +1415,22 @@ select {
   .nav-item { display: flex; align-items: center; }
   table { min-width: 560px; } /* slightly narrower so small tablets scroll less */
   th, td { padding: 12px 10px; } /* a bit more breathing room for fingers */
+
+  /* iOS Safari auto-zooms the whole page when focusing a text input
+     smaller than 16px — this is what makes typing anywhere in the app
+     feel broken on iPhone. Bumping to 16px on mobile only (desktop is
+     untouched) stops that zoom without changing how anything looks. */
+  input, select, textarea { font-size: 16px; }
+
+  /* "Edit" / "Remove" / other small pill buttons and the incident
+     checkboxes are comfortably clickable with a mouse but too small
+     to reliably tap with a finger — widen the hit area on touch
+     screens only. */
+  .small-action, .ghost-action { min-height: 36px; padding: 6px 12px; }
+  #incidentTable input[type="checkbox"], #selectAllIncidents {
+    width: 20px;
+    height: 20px;
+  }
 }
 
 @media (max-width: 480px) {
@@ -1629,8 +1651,8 @@ select {
     align-items: center;
     justify-content: center;
     position: fixed;
-    top: 12px;
-    right: 14px;
+    top: calc(12px + env(safe-area-inset-top));
+    right: calc(14px + env(safe-area-inset-right));
     z-index: 260;
     width: 38px;
     height: 38px;
@@ -1654,6 +1676,7 @@ select {
     top: 0; left: 0; bottom: 0;
     z-index: 250;
     width: 250px;
+    padding-left: env(safe-area-inset-left);
     transform: translateX(-100%);
     transition: transform 0.26s cubic-bezier(0.16,1,0.3,1);
     flex-direction: column;
@@ -1674,7 +1697,7 @@ select {
     overflow-y: auto;
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
-    padding-top: 56px;
+    padding-top: calc(56px + env(safe-area-inset-top));
   }
   .page.active {
     overflow-y: visible;
@@ -1720,5 +1743,5 @@ select {
 }
 
 @media (max-width: 640px) {
-  .toast-stack { left: 12px; right: 12px; bottom: 12px; max-width: none; }
+  .toast-stack { left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); max-width: none; }
 }
